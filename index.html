@@ -183,7 +183,7 @@ function loadData() {
 function saveData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
 
 // ─────────────────────────────────────────────────────────────────────────────
-export default function App() {
+function App() {
   const [data, setData] = useState(loadData);
   const [tab, setTab] = useState("today");
   const [selectedDate, setSelectedDate] = useState(toYMD(new Date()));
