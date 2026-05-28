@@ -28,13 +28,13 @@ const TIMER_KEY = "work_timer_v2";
 // ─── SUPABASE 설정 ────────────────────────────────────────────────────────────
 const SUPABASE_URL = "https://havjlvtpgqimgkgbblif.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhdmpsdnRwZ3FpbWdrZ2JibGlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5MDg1NjMsImV4cCI6MjA5NTQ4NDU2M30.FZIJ_N07cui-todQjR1z5A5dyqae_Nq5Nw5Jrs4ViM4";
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+const sbClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 const USER_ID = "default"; // 단일 사용자용
 
 async function loadDataFromSupabase() {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await sbClient
       .from("work_tracker_data")
       .select("*")
       .eq("user_id", USER_ID)
@@ -51,7 +51,7 @@ async function loadDataFromSupabase() {
 
 async function saveDataToSupabase(d) {
   try {
-    await supabase
+    await sbClient
       .from("work_tracker_data")
       .upsert({ user_id: USER_ID, payload: JSON.stringify(d), updated_at: new Date().toISOString() }, { onConflict: "user_id" });
   } catch {}
