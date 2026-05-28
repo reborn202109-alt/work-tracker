@@ -10,6 +10,7 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 body { background: #0f172a; font-family: -apple-system, 'Noto Sans KR', sans-serif; }
@@ -23,6 +24,38 @@ const { useState, useEffect, useCallback, useRef } = React;
 
 const STORAGE_KEY = "work_tracker_v2";
 const TIMER_KEY = "work_timer_v2";
+
+// ─── SUPABASE 설정 ────────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://havjlvtpgqimgkgbblif.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhdmpsdnRwZ3FpbWdrZ2JibGlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5MDg1NjMsImV4cCI6MjA5NTQ4NDU2M30.FZIJ_N07cui-todQjR1z5A5dyqae_Nq5Nw5Jrs4ViM4";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+const USER_ID = "default"; // 단일 사용자용
+
+async function loadDataFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from("work_tracker_data")
+      .select("*")
+      .eq("user_id", USER_ID)
+      .single();
+    if (error || !data) return null;
+    const parsed = JSON.parse(data.payload);
+    // migrate old incomeCategories
+    if (parsed.settings?.incomeCategories?.[0] && typeof parsed.settings.incomeCategories[0] === "string") {
+      parsed.settings.incomeCategories = parsed.settings.incomeCategories.map(n => ({ name: n, color: "#818cf8" }));
+    }
+    return parsed;
+  } catch { return null; }
+}
+
+async function saveDataToSupabase(d) {
+  try {
+    await supabase
+      .from("work_tracker_data")
+      .upsert({ user_id: USER_ID, payload: JSON.stringify(d), updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  } catch {}
+}
 
 const DEFAULT_EXPENSE_CATEGORIES = ["식비", "교통비", "주거비", "통신비", "의류", "기타"];
 const WEATHER_OPTIONS = [
@@ -150,41 +183,44 @@ function buildSettlements(data) {
   return list.sort((a, b) => a.settlDate.localeCompare(b.settlDate));
 }
 
-function loadData() {
+const DEFAULT_DATA = {
+  days: {},
+  settings: {
+    taxRate: 3.3,
+    dailyGoalHours: 8,
+    monthlyGoalIncome: 0,
+    fixedOffDays: [0],
+    timerMode: "up",
+    theme: "dark",
+    incomeCategories: [
+      { name: "쿠팡", color: "#f97316", settlementType: "coupang" },
+      { name: "배민", color: "#22c55e", settlementType: "businessDays", settlementDays: 3 },
+      { name: "기타수입", color: "#818cf8", settlementType: "manual" },
+    ],
+    expenseCategories: [...DEFAULT_EXPENSE_CATEGORIES],
+  },
+};
+
+// localStorage fallback
+function loadDataLocal() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      // migrate old incomeCategories (string[]) to object[]
       if (parsed.settings?.incomeCategories?.[0] && typeof parsed.settings.incomeCategories[0] === "string") {
         parsed.settings.incomeCategories = parsed.settings.incomeCategories.map(n => ({ name: n, color: "#818cf8" }));
       }
       return parsed;
     }
   } catch {}
-  return {
-    days: {},
-    settings: {
-      taxRate: 3.3,
-      dailyGoalHours: 8,
-      monthlyGoalIncome: 0,
-      fixedOffDays: [0],
-      timerMode: "up",
-      theme: "dark",
-      incomeCategories: [
-        { name: "쿠팡", color: "#f97316", settlementType: "coupang" },
-        { name: "배민", color: "#22c55e", settlementType: "businessDays", settlementDays: 3 },
-        { name: "기타수입", color: "#818cf8", settlementType: "manual" },
-      ],
-      expenseCategories: [...DEFAULT_EXPENSE_CATEGORIES],
-    },
-  };
+  return DEFAULT_DATA;
 }
-function saveData(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+function saveDataLocal(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
 
 // ─────────────────────────────────────────────────────────────────────────────
 function App() {
-  const [data, setData] = useState(loadData);
+  const [data, setData] = useState(loadDataLocal);
+  const [syncStatus, setSyncStatus] = useState("loading"); // loading | synced | error | saving
   const [tab, setTab] = useState("today");
   const [selectedDate, setSelectedDate] = useState(toYMD(new Date()));
   const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
@@ -195,7 +231,29 @@ function App() {
   const [timerElapsed, setTimerElapsed] = useState(0);
   const timerRef = useRef(null);
 
-  useEffect(() => { saveData(data); }, [data]);
+  useEffect(() => {
+    // Supabase에서 초기 데이터 로딩
+    loadDataFromSupabase().then(cloudData => {
+      if (cloudData) {
+        setData(cloudData);
+        saveDataLocal(cloudData);
+      }
+      setSyncStatus("synced");
+    }).catch(() => setSyncStatus("error"));
+  }, []);
+
+  const saveTimer = useRef(null);
+  useEffect(() => {
+    saveDataLocal(data);
+    // 1.5초 디바운스로 Supabase 저장
+    if (syncStatus === "synced" || syncStatus === "saving") {
+      setSyncStatus("saving");
+      clearTimeout(saveTimer.current);
+      saveTimer.current = setTimeout(() => {
+        saveDataToSupabase(data).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
+      }, 1500);
+    }
+  }, [data]);
 
   useEffect(() => {
     try {
@@ -268,10 +326,18 @@ function App() {
           <div style={T.headerTitle}>💼 나의 근무일지</div>
           <div style={T.headerDate}>{new Date().toLocaleDateString("ko-KR", { year:"numeric", month:"long", day:"numeric", weekday:"short" })}</div>
         </div>
-        <button onClick={() => updateSettings(s => ({ ...s, theme: s.theme === "light" ? "dark" : "light" }))}
-          style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer" }}>
-          {isDark ? "☀️" : "🌙"}
-        </button>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ fontSize:11, color: syncStatus==="synced"?"#4ade80": syncStatus==="saving"?"#facc15": syncStatus==="loading"?"#94a3b8":"#f87171" }}>
+            {syncStatus==="synced"&&"☁️ 저장됨"}
+            {syncStatus==="saving"&&"⏳ 저장 중..."}
+            {syncStatus==="loading"&&"🔄 불러오는 중..."}
+            {syncStatus==="error"&&"⚠️ 저장 실패"}
+          </div>
+          <button onClick={() => updateSettings(s => ({ ...s, theme: s.theme === "light" ? "dark" : "light" }))}
+            style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer" }}>
+            {isDark ? "☀️" : "🌙"}
+          </button>
+        </div>
       </div>
 
       {/* Timer Bar */}
