@@ -549,7 +549,7 @@ function DayInput({ date, setDate, data, updateDay, T }) {
         <textarea placeholder="오늘 하루 어땠어요? ✍️" value={day.memo||""} onChange={e => set("memo", e.target.value)} style={{ ...T.textarea }} rows={4} />
       </div>
 
-      {(totalIncome>0 || worked>0) && (
+      {(totalIncome>0 || worked>0 || totalExpense>0) && (
         <div style={T.summaryCard}>
           <div style={T.summaryTitle}>📋 오늘 요약</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
