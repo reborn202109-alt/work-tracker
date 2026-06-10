@@ -159,7 +159,8 @@ function getPendingFixedExpenses(dateStr, data) {
   const [year, month, dayStr] = dateStr.split("-");
   const day = parseInt(dayStr);
   const ym = `${year}-${month}`;
-  const checkedThisMonth = data.days[dateStr]?.checkedFixedExpenses?.filter(id => id.startsWith(ym)) || [];
+  const allChecked = Object.values(data.days).flatMap(d => d.checkedFixedExpenses || []);
+  const checkedThisMonth = allChecked.filter(id => id.startsWith(ym));
   const checkedIds = checkedThisMonth.map(id => id.replace(`${ym}_`, ""));
   return (data.settings.fixedExpenses || []).filter(fe => {
     if (checkedIds.includes(fe.id)) return false;
