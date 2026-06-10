@@ -461,8 +461,14 @@ function DayInput({ date, setDate, data, updateDay, T }) {
         {expenseItems.map((item, i) => (
           <div key={i} style={{ marginBottom:10, borderLeft: item.isFixed ? "3px solid #f97316" : "3px solid transparent", paddingLeft: item.isFixed ? 8 : 0 }}>
             <div style={{ display:"flex", gap:6, marginBottom:4, alignItems:"center" }}>
-              <input placeholder="카테고리" value={item.category||""} onChange={e => { const next=[...expenseItems]; next[i]={...next[i],category:e.target.value}; set("expenseItems",next); }} style={{ ...T.input, flex:1 }} list={`exp-cats-${i}`} />
-              <datalist id={`exp-cats-${i}`}>{settings.expenseCategories.map(c => <option key={c} value={c} />)}</datalist>
+              <select value={item.category||""} onChange={e => {
+                const next=[...expenseItems]; next[i]={...next[i],category:e.target.value==="__direct__"?"":e.target.value}; set("expenseItems",next);
+              }} style={{ ...T.input, flex:1 }}>
+                <option value="">카테고리 선택</option>
+                {settings.expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                <option value="고정지출">고정지출</option>
+                <option value="기타">기타</option>
+              </select>
               <button onClick={() => set("expenseItems", expenseItems.filter((_,j)=>j!==i))} style={T.delBtn}>✕</button>
             </div>
             <div style={{ display:"flex", gap:6 }}>
