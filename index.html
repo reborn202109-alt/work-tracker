@@ -156,12 +156,14 @@ function buildSettlements(data) {
 }
 
 function getPendingFixedExpenses(dateStr, data) {
-  const day = parseInt(dateStr.split("-")[2]);
-  const dateObj = new Date(dateStr + "T00:00:00");
-  const allChecked = Object.values(data.days).flatMap(d => d.checkedFixedExpenses || []);
+  const [year, month, dayStr] = dateStr.split("-");
+  const day = parseInt(dayStr);
+  const ym = `${year}-${month}`;
+  const checkedThisMonth = data.days[dateStr]?.checkedFixedExpenses?.filter(id => id.startsWith(ym)) || [];
+  const checkedIds = checkedThisMonth.map(id => id.replace(`${ym}_`, ""));
   return (data.settings.fixedExpenses || []).filter(fe => {
-    if (allChecked.includes(fe.id)) return false;
-    return fe.dayOfMonth <= dateObj.getDate();
+    if (checkedIds.includes(fe.id)) return false;
+    return fe.dayOfMonth <= day;
   });
 }
 
