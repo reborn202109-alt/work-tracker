@@ -385,7 +385,7 @@ function DayInput({ date, setDate, data, updateDay, T }) {
     updateDay(date, d => ({
       ...d,
       expenseItems: [...(d.expenseItems||[]), { category: fe.category||"고정지출", title: fe.name, amount: fe.amount, fromFixed: true }],
-      checkedFixedExpenses: [...(d.checkedFixedExpenses||[]), fe.id],
+      checkedFixedExpenses: [...(d.checkedFixedExpenses||[]), `${dateStr.slice(0,7)}_${fe.id}`],
     }));
   };
 
