@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="근무일지">
 <title>나의 근무일지</title>
@@ -35,18 +35,18 @@ async function loadDataFromSupabase() {
     const { data, error } = await sbClient.from("work_tracker_data").select("*").eq("user_id", USER_ID).single();
     if (error || !data) return null;
     const parsed = JSON.parse(data.payload);
-    if (parsed.settings?.incomeCategories?.[0] && typeof parsed.settings.incomeCategories[0] === "string") {
-      parsed.settings.incomeCategories = parsed.settings.incomeCategories.map(n => ({ name: n, color: "#818cf8" }));
+    if (parsed.settings && parsed.settings.incomeCategories && parsed.settings.incomeCategories[0] && typeof parsed.settings.incomeCategories[0] === "string") {
+      parsed.settings.incomeCategories = parsed.settings.incomeCategories.map(function(n) { return { name: n, color: "#818cf8" }; });
     }
-    if (!parsed.settings.fixedExpenses) parsed.settings.fixedExpenses = [];
+    if (parsed.settings && !parsed.settings.fixedExpenses) parsed.settings.fixedExpenses = [];
     return parsed;
-  } catch { return null; }
+  } catch (e) { return null; }
 }
 
 async function saveDataToSupabase(d) {
   try {
     await sbClient.from("work_tracker_data").upsert({ user_id: USER_ID, payload: JSON.stringify(d), updated_at: new Date().toISOString() }, { onConflict: "user_id" });
-  } catch {}
+  } catch (e) {}
 }
 
 const DEFAULT_EXPENSE_CATEGORIES = ["식비", "교통비", "주거비", "통신비", "의류", "기타"];
@@ -55,7 +55,7 @@ const WEATHER_OPTIONS = [
   { icon: "⛅", label: "흐림" },
   { icon: "🌧️", label: "비" },
   { icon: "❄️", label: "눈" },
-  { icon: "🌪️", label: "바람" },
+  { icon: "🌪️", label: "바람" }
 ];
 const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const MOTIVATIONS_SUCCESS = ["🔥 오늘도 목표 달성! 이 기세 유지해요!", "✨ 완벽해요! 당신은 할 수 있어요!", "🎉 목표 초과 달성! 진짜 열심히 했네요!", "💪 역시! 오늘도 멋지게 해냈어요!"];
@@ -63,13 +63,13 @@ const MOTIVATIONS_FAIL = ["😤 조금만 더 하면 됐는데! 내일은 꼭!",
 
 function calcHours(start, end) {
   if (!start || !end) return 0;
-  const [sh, sm] = start.split(":").map(Number);
-  const [eh, em] = end.split(":").map(Number);
-  let mins = (eh * 60 + em) - (sh * 60 + sm);
+  const sParts = start.split(":").map(Number);
+  const eParts = end.split(":").map(Number);
+  let mins = (eParts[0] * 60 + eParts[1]) - (sParts[0] * 60 + sParts[1]);
   if (mins < 0) mins += 24 * 60;
   return Math.round((mins / 60) * 100) / 100;
 }
-function fmt(n) { return (n ?? 0).toLocaleString("ko-KR"); }
+function fmt(n) { return (n == null ? 0 : n).toLocaleString("ko-KR"); }
 function toYMD(d) { return d.toISOString().slice(0, 10); }
 function getMotivation(worked, goal) {
   if (!goal || !worked) return null;
@@ -77,27 +77,31 @@ function getMotivation(worked, goal) {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
-function addBusinessDays(dateStr, days, holidays = []) {
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function addBusinessDays(dateStr, days, holidays) {
+  holidays = holidays || [];
   const parts = dateStr.split("-").map(Number);
-  const d = new Date(parts[0], parts[1]-1, parts[2]);
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
   let added = 0;
   while (added < days) {
     d.setDate(d.getDate() + 1);
     const dow = d.getDay();
-    const ymd = d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
-    if (dow !== 0 && dow !== 6 && !holidays.includes(ymd)) added++;
+    const ymd = d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+    if (dow !== 0 && dow !== 6 && holidays.indexOf(ymd) === -1) added++;
   }
-  return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
 }
 
-function coupangSettlementDate(dateStr, holidays = []) {
+function coupangSettlementDate(dateStr, holidays) {
+  holidays = holidays || [];
   const parts = dateStr.split("-").map(Number);
-  const d = new Date(parts[0], parts[1]-1, parts[2]);
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
   const dow = d.getDay();
   const daysSinceWed = (dow - 3 + 7) % 7;
-  const fri = new Date(parts[0], parts[1]-1, parts[2] - daysSinceWed + 9);
-  const ymd = () => fri.getFullYear()+"-"+String(fri.getMonth()+1).padStart(2,"0")+"-"+String(fri.getDate()).padStart(2,"0");
-  while (fri.getDay() === 0 || fri.getDay() === 6 || holidays.includes(ymd())) fri.setDate(fri.getDate() + 1);
+  const fri = new Date(parts[0], parts[1] - 1, parts[2] - daysSinceWed + 9);
+  function ymd() { return fri.getFullYear() + "-" + pad2(fri.getMonth() + 1) + "-" + pad2(fri.getDate()); }
+  while (fri.getDay() === 0 || fri.getDay() === 6 || holidays.indexOf(ymd()) !== -1) fri.setDate(fri.getDate() + 1);
   return ymd();
 }
 
@@ -110,51 +114,50 @@ function nextWeekday(dateStr, targetDow) {
   return toYMD(d);
 }
 
-function calcSettlementDate(dateStr, cat, holidays = []) {
-  if (!cat?.settlementType) return null;
+function calcSettlementDate(dateStr, cat, holidays) {
+  if (!cat || !cat.settlementType) return null;
   if (cat.settlementType === "coupang") return coupangSettlementDate(dateStr, holidays);
-  if (cat.settlementType === "weekday") return nextWeekday(dateStr, cat.settlementDow ?? 5);
-  if (cat.settlementType === "businessDays") return addBusinessDays(dateStr, cat.settlementDays ?? 3, holidays);
+  if (cat.settlementType === "weekday") return nextWeekday(dateStr, cat.settlementDow == null ? 5 : cat.settlementDow);
+  if (cat.settlementType === "businessDays") return addBusinessDays(dateStr, cat.settlementDays == null ? 3 : cat.settlementDays, holidays);
   return null;
 }
 
 function buildSettlements(data) {
-  const { days, settings } = data;
+  const days = data.days, settings = data.settings;
   const holidays = settings.holidays || [];
   const list = [];
-  Object.entries(days).forEach(([dateStr, day]) => {
-    (day.incomeItems || []).forEach((item) => {
+  Object.keys(days).forEach(function(dateStr) {
+    const day = days[dateStr];
+    (day.incomeItems || []).forEach(function(item) {
       const amt = Number(item.amount) || 0;
       if (!amt) return;
-      const catObj = settings.incomeCategories.find(c => (c.name || c) === item.category);
+      const catObj = settings.incomeCategories.find(function(c) { return (c.name || c) === item.category; });
       const netAmt = item.taxable ? Math.round(amt * (1 - settings.taxRate / 100)) : amt;
       let settlDate = null;
-      if (catObj?.settlementType === "manual") {
+      if (catObj && catObj.settlementType === "manual") {
         settlDate = item.settlementDate || null;
       } else {
         settlDate = calcSettlementDate(dateStr, catObj, holidays);
       }
-      if (settlDate) list.push({ workDate: dateStr, settlDate, category: item.category || "기타", title: item.title || "", amount: amt, netAmt, taxable: item.taxable, color: catObj?.color || "#818cf8" });
+      if (settlDate) list.push({ workDate: dateStr, settlDate: settlDate, category: item.category || "기타", title: item.title || "", amount: amt, netAmt: netAmt, taxable: item.taxable, color: (catObj && catObj.color) || "#818cf8" });
     });
   });
-  return list.sort((a, b) => a.settlDate.localeCompare(b.settlDate));
+  list.sort(function(a, b) { return a.settlDate.localeCompare(b.settlDate); });
+  return list;
 }
 
-// 고정 지출: 해당 월에 납부 안 한 것 + 납부일이 해당 날짜 이하인 것
 function getPendingFixedExpenses(dateStr, data) {
-  const ym = dateStr.slice(0, 7); // "2026-06"
-  const day = parseInt(dateStr.split("-")[2]);
-  // 이번 달에 납부 완료된 id 목록
+  const ym = dateStr.slice(0, 7);
+  const day = parseInt(dateStr.split("-")[2], 10);
   const paidThisMonth = [];
-  Object.values(data.days).forEach(d => {
-    (d.checkedFixedExpenses || []).forEach(entry => {
-      if (entry.startsWith(ym + "_")) {
-        paidThisMonth.push(entry.slice(ym.length + 1));
-      }
+  Object.keys(data.days).forEach(function(k) {
+    const d = data.days[k];
+    (d.checkedFixedExpenses || []).forEach(function(entry) {
+      if (entry.indexOf(ym + "_") === 0) paidThisMonth.push(entry.slice(ym.length + 1));
     });
   });
-  return (data.settings.fixedExpenses || []).filter(fe => {
-    if (paidThisMonth.includes(fe.id)) return false;
+  return (data.settings.fixedExpenses || []).filter(function(fe) {
+    if (paidThisMonth.indexOf(fe.id) !== -1) return false;
     return fe.dayOfMonth <= day;
   });
 }
@@ -171,11 +174,12 @@ const DEFAULT_DATA = {
     incomeCategories: [
       { name: "쿠팡", color: "#f97316", settlementType: "coupang" },
       { name: "배민", color: "#22c55e", settlementType: "businessDays", settlementDays: 3 },
-      { name: "기타수입", color: "#818cf8", settlementType: "manual" },
+      { name: "기타수입", color: "#818cf8", settlementType: "manual" }
     ],
-    expenseCategories: [...DEFAULT_EXPENSE_CATEGORIES],
+    expenseCategories: DEFAULT_EXPENSE_CATEGORIES.slice(),
     fixedExpenses: [],
-  },
+    holidays: []
+  }
 };
 
 function loadDataLocal() {
@@ -183,13 +187,14 @@ function loadDataLocal() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (parsed.settings?.incomeCategories?.[0] && typeof parsed.settings.incomeCategories[0] === "string") {
-        parsed.settings.incomeCategories = parsed.settings.incomeCategories.map(n => ({ name: n, color: "#818cf8" }));
+      if (parsed.settings && parsed.settings.incomeCategories && parsed.settings.incomeCategories[0] && typeof parsed.settings.incomeCategories[0] === "string") {
+        parsed.settings.incomeCategories = parsed.settings.incomeCategories.map(function(n) { return { name: n, color: "#818cf8" }; });
       }
-      if (!parsed.settings.fixedExpenses) parsed.settings.fixedExpenses = [];
+      if (parsed.settings && !parsed.settings.fixedExpenses) parsed.settings.fixedExpenses = [];
+      if (parsed.settings && !parsed.settings.holidays) parsed.settings.holidays = [];
       return parsed;
     }
-  } catch {}
+  } catch (e) {}
   return DEFAULT_DATA;
 }
 function saveDataLocal(d) { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
@@ -198,73 +203,86 @@ function App() {
   const [data, setData] = useState(loadDataLocal);
   const [syncStatus, setSyncStatus] = useState("loading");
   const [tab, setTab] = useState("today");
-  const [selectedDate, setSelectedDate] = useState(toYMD(new Date()));
-  const [calMonth, setCalMonth] = useState(() => { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
+  const [selectedDate, setSelectedDate] = useState(function() { return toYMD(new Date()); });
+  const [calMonth, setCalMonth] = useState(function() { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerStart, setTimerStart] = useState(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
   const timerRef = useRef(null);
   const saveTimer = useRef(null);
 
-  useEffect(() => {
-    loadDataFromSupabase().then(cloudData => {
+  useEffect(function() {
+    loadDataFromSupabase().then(function(cloudData) {
       if (cloudData) { setData(cloudData); saveDataLocal(cloudData); }
       setSyncStatus("synced");
-    }).catch(() => setSyncStatus("error"));
+    }).catch(function() { setSyncStatus("error"); });
   }, []);
 
-  useEffect(() => {
+  useEffect(function() {
     saveDataLocal(data);
     if (syncStatus === "synced" || syncStatus === "saving") {
       setSyncStatus("saving");
       clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(() => {
-        saveDataToSupabase(data).then(() => setSyncStatus("synced")).catch(() => setSyncStatus("error"));
+      saveTimer.current = setTimeout(function() {
+        saveDataToSupabase(data).then(function() { setSyncStatus("synced"); }).catch(function() { setSyncStatus("error"); });
       }, 1500);
     }
   }, [data]);
 
-  useEffect(() => {
+  useEffect(function() {
     try {
       const saved = localStorage.getItem(TIMER_KEY);
-      if (saved) { const { start } = JSON.parse(saved); setTimerStart(start); setTimerRunning(true); }
-    } catch {}
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        setTimerStart(parsed.start);
+        setTimerRunning(true);
+      }
+    } catch (e) {}
   }, []);
 
-  useEffect(() => {
+  useEffect(function() {
     if (timerRunning && timerStart) {
-      timerRef.current = setInterval(() => setTimerElapsed(Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000)), 1000);
-    } else { clearInterval(timerRef.current); }
-    return () => clearInterval(timerRef.current);
+      timerRef.current = setInterval(function() {
+        setTimerElapsed(Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000));
+      }, 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return function() { clearInterval(timerRef.current); };
   }, [timerRunning, timerStart]);
 
-  const updateDay = useCallback((date, updater) => {
-    setData(prev => ({ ...prev, days: { ...prev.days, [date]: updater(prev.days[date] || {}) } }));
+  const updateDay = useCallback(function(date, updater) {
+    setData(function(prev) {
+      const nextDays = Object.assign({}, prev.days);
+      nextDays[date] = updater(prev.days[date] || {});
+      return Object.assign({}, prev, { days: nextDays });
+    });
   }, []);
-  const updateSettings = useCallback((updater) => {
-    setData(prev => ({ ...prev, settings: updater(prev.settings) }));
+  const updateSettings = useCallback(function(updater) {
+    setData(function(prev) { return Object.assign({}, prev, { settings: updater(prev.settings) }); });
   }, []);
 
-  const handleClockIn = () => {
-    const now = new Date(); const iso = now.toISOString();
+  const handleClockIn = function() {
+    const now = new Date();
+    const iso = now.toISOString();
     setTimerStart(iso); setTimerRunning(true); setTimerElapsed(0);
     localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso }));
     const todayStr = toYMD(now);
-    updateDay(todayStr, d => ({ ...d, startTime: String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0") }));
+    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()) }); });
     setSelectedDate(todayStr); setTab("today");
   };
-  const handleClockOut = () => {
+  const handleClockOut = function() {
     const now = new Date();
     setTimerRunning(false); localStorage.removeItem(TIMER_KEY);
     const todayStr = toYMD(now);
-    updateDay(todayStr, d => ({ ...d, endTime: String(now.getHours()).padStart(2,"0")+":"+String(now.getMinutes()).padStart(2,"0") }));
+    updateDay(todayStr, function(d) { return Object.assign({}, d, { endTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()) }); });
     setTimerElapsed(0); setTimerStart(null);
   };
 
-  const fmtTimer = (s) => {
+  function fmtTimer(s) {
     const a = Math.abs(s);
-    return `${String(Math.floor(a/3600)).padStart(2,"0")}:${String(Math.floor((a%3600)/60)).padStart(2,"0")}:${String(a%60).padStart(2,"0")}`;
-  };
+    return pad2(Math.floor(a / 3600)) + ":" + pad2(Math.floor((a % 3600) / 60)) + ":" + pad2(a % 60);
+  }
   const isCountdown = data.settings.timerMode === "down";
   const goalSecs = (data.settings.dailyGoalHours || 0) * 3600;
   const displaySecs = isCountdown ? Math.max(goalSecs - timerElapsed, 0) : timerElapsed;
@@ -277,21 +295,21 @@ function App() {
     { id: "calendar", label: "🗓 달력" },
     { id: "settlement", label: "💳 정산" },
     { id: "stats", label: "📊 통계" },
-    { id: "settings", label: "⚙️ 설정" },
+    { id: "settings", label: "⚙️ 설정" }
   ];
 
   return (
-    <div style={{ ...T.root, fontFamily: "'Noto Sans KR', sans-serif", minHeight: "100vh" }}>
+    <div style={Object.assign({}, T.root, { fontFamily: "'Noto Sans KR', sans-serif", minHeight: "100vh" })}>
       <div style={T.header}>
         <div>
           <div style={T.headerTitle}>💼 나의 근무일지</div>
-          <div style={T.headerDate}>{new Date().toLocaleDateString("ko-KR", { year:"numeric", month:"long", day:"numeric", weekday:"short" })}</div>
+          <div style={T.headerDate}>{new Date().toLocaleDateString("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "short" })}</div>
         </div>
-        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-          <div style={{ fontSize:11, color: syncStatus==="synced"?"#4ade80": syncStatus==="saving"?"#facc15": syncStatus==="loading"?"#94a3b8":"#f87171" }}>
-            {syncStatus==="synced"&&"☁️ 저장됨"}{syncStatus==="saving"&&"⏳ 저장 중..."}{syncStatus==="loading"&&"🔄 불러오는 중..."}{syncStatus==="error"&&"⚠️ 저장 실패"}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 11, color: syncStatus === "synced" ? "#4ade80" : syncStatus === "saving" ? "#facc15" : syncStatus === "loading" ? "#94a3b8" : "#f87171" }}>
+            {syncStatus === "synced" ? "☁️ 저장됨" : syncStatus === "saving" ? "⏳ 저장 중..." : syncStatus === "loading" ? "🔄 불러오는 중..." : "⚠️ 저장 실패"}
           </div>
-          <button onClick={() => updateSettings(s => ({ ...s, theme: s.theme === "light" ? "dark" : "light" }))} style={{ background:"none", border:"none", fontSize:20, cursor:"pointer" }}>
+          <button onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { theme: s.theme === "light" ? "dark" : "light" }); }); }} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer" }}>
             {isDark ? "☀️" : "🌙"}
           </button>
         </div>
@@ -299,99 +317,102 @@ function App() {
 
       <div style={T.timerBar}>
         {timerRunning ? (
-          <>
-            <div style={{ display:"flex", flexDirection:"column", gap:2 }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, fontSize:22, fontWeight:800, color: goalReached?"#facc15":isCountdown?"#f87171":"#4ade80", fontVariantNumeric:"tabular-nums" }}>
-                <span style={{ width:8, height:8, borderRadius:"50%", display:"inline-block", background: goalReached?"#facc15":isCountdown?"#f87171":"#4ade80" }} />
+          <React.Fragment>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 22, fontWeight: 800, color: goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80", fontVariantNumeric: "tabular-nums" }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80" }} />
                 {fmtTimer(displaySecs)}
               </div>
-              <div style={{ fontSize:11, color:T.muted }}>{goalReached?"🎉 목표 달성!":isCountdown?"⬇️ 카운트다운":"⬆️ 카운트업"}</div>
+              <div style={{ fontSize: 11, color: T.muted }}>{goalReached ? "🎉 목표 달성!" : isCountdown ? "⬇️ 카운트다운" : "⬆️ 카운트업"}</div>
             </div>
             <button onClick={handleClockOut} style={T.clockOutBtn}>🏁 퇴근</button>
-          </>
+          </React.Fragment>
         ) : (
-          <>
-            <div style={{ fontSize:12, color:T.muted }}>{isCountdown?`⬇️ 카운트다운 (목표 ${data.settings.dailyGoalHours}h)`:"⬆️ 카운트업"}</div>
+          <React.Fragment>
+            <div style={{ fontSize: 12, color: T.muted }}>{isCountdown ? ("⬇️ 카운트다운 (목표 " + data.settings.dailyGoalHours + "h)") : "⬆️ 카운트업"}</div>
             <button onClick={handleClockIn} style={T.clockInBtn}>▶ 출근 시작</button>
-          </>
+          </React.Fragment>
         )}
       </div>
 
       <div style={T.tabBar}>
-        {tabs.map(t => <button key={t.id} onClick={() => setTab(t.id)} style={{ ...T.tabBtn, ...(tab===t.id?T.tabBtnActive:{}) }}>{t.label}</button>)}
+        {tabs.map(function(t) {
+          return <button key={t.id} onClick={function() { setTab(t.id); }} style={Object.assign({}, T.tabBtn, tab === t.id ? T.tabBtnActive : {})}>{t.label}</button>;
+        })}
       </div>
 
-      <div style={{ padding:"12px 12px 80px" }}>
-        {tab==="today" && <DayInput date={selectedDate} setDate={setSelectedDate} data={data} updateDay={updateDay} T={T} />}
-        {tab==="calendar" && <CalendarView data={data} calMonth={calMonth} setCalMonth={setCalMonth} setSelectedDate={d => { setSelectedDate(d); setTab("today"); }} T={T} />}
-        {tab==="settlement" && <SettlementView data={data} T={T} />}
-        {tab==="stats" && <StatsView data={data} T={T} />}
-        {tab==="settings" && <SettingsView data={data} updateSettings={updateSettings} T={T} />}
+      <div style={{ padding: "12px 12px 80px" }}>
+        {tab === "today" && <DayInput date={selectedDate} setDate={setSelectedDate} data={data} updateDay={updateDay} T={T} />}
+        {tab === "calendar" && <CalendarView data={data} calMonth={calMonth} setCalMonth={setCalMonth} setSelectedDate={function(d) { setSelectedDate(d); setTab("today"); }} T={T} />}
+        {tab === "settlement" && <SettlementView data={data} T={T} />}
+        {tab === "stats" && <StatsView data={data} T={T} />}
+        {tab === "settings" && <SettingsView data={data} updateSettings={updateSettings} T={T} />}
       </div>
     </div>
   );
 }
 
-function DayInput({ date, setDate, data, updateDay, T }) {
-  const { settings } = data;
+function DayInput(props) {
+  const date = props.date, setDate = props.setDate, data = props.data, updateDay = props.updateDay, T = props.T;
+  const settings = data.settings;
   const day = data.days[date] || {};
   const income = day.incomeItems || [];
   const expenseItems = day.expenseItems || [];
   const worked = calcHours(day.startTime, day.endTime);
-  const totalIncome = income.reduce((s,i) => s+(Number(i.amount)||0), 0);
-  const taxDeducted = income.reduce((s,i) => { const a=Number(i.amount)||0; return s+(i.taxable?a*(1-settings.taxRate/100):a); }, 0);
-  const totalExpense = expenseItems.reduce((s,i) => s+(Number(i.amount)||0), 0);
-  const motivation = worked>0&&settings.dailyGoalHours ? getMotivation(worked,settings.dailyGoalHours) : null;
-  const set = (field, val) => updateDay(date, d => ({ ...d, [field]: val }));
-  const isFixedOff = settings.fixedOffDays.includes(new Date(date+"T00:00:00").getDay());
+  const totalIncome = income.reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
+  const taxDeducted = income.reduce(function(s, i) { const a = Number(i.amount) || 0; return s + (i.taxable ? a * (1 - settings.taxRate / 100) : a); }, 0);
+  const totalExpense = expenseItems.reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
+  const motivation = (worked > 0 && settings.dailyGoalHours) ? getMotivation(worked, settings.dailyGoalHours) : null;
+  function set(field, val) { updateDay(date, function(d) { const next = Object.assign({}, d); next[field] = val; return next; }); }
+  const isFixedOff = settings.fixedOffDays.indexOf(new Date(date + "T00:00:00").getDay()) !== -1;
   const pendingFixed = getPendingFixedExpenses(date, data);
 
-  const checkFixedExpense = (fe) => {
+  function checkFixedExpense(fe) {
     const ym = date.slice(0, 7);
-    updateDay(date, d => ({
-      ...d,
-      expenseItems: [...(d.expenseItems||[]), { category: fe.category||"고정지출", title: fe.name, amount: fe.amount, isFixed: true }],
-      checkedFixedExpenses: [...(d.checkedFixedExpenses||[]), `${ym}_${fe.id}`],
-    }));
-  };
+    updateDay(date, function(d) {
+      const items = (d.expenseItems || []).concat([{ category: fe.category || "고정지출", title: fe.name, amount: fe.amount, isFixed: true }]);
+      const checked = (d.checkedFixedExpenses || []).concat([ym + "_" + fe.id]);
+      return Object.assign({}, d, { expenseItems: items, checkedFixedExpenses: checked });
+    });
+  }
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={T.card}>
         <label style={T.label}>날짜 선택</label>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} style={T.input} />
+        <input type="date" value={date} onChange={function(e) { setDate(e.target.value); }} style={T.input} />
         {isFixedOff && !day.isOff && <div style={T.offBadge}>🛌 고정 휴일</div>}
       </div>
 
       <div style={T.card}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <span style={T.label}>휴무일 설정</span>
-          <label style={{ display:"flex", alignItems:"center", cursor:"pointer", fontSize:13 }}>
-            <input type="checkbox" checked={!!day.isOff} onChange={e => set("isOff", e.target.checked)} />
-            <span style={{ marginLeft:6 }}>{day.isOff?"🚫 휴무":"✅ 근무"}</span>
+          <label style={{ display: "flex", alignItems: "center", cursor: "pointer", fontSize: 13 }}>
+            <input type="checkbox" checked={!!day.isOff} onChange={function(e) { set("isOff", e.target.checked); }} />
+            <span style={{ marginLeft: 6 }}>{day.isOff ? "🚫 휴무" : "✅ 근무"}</span>
           </label>
         </div>
-        {day.isOff && <input placeholder="휴무 사유..." value={day.offReason||""} onChange={e => set("offReason", e.target.value)} style={{ ...T.input, marginTop:8 }} />}
+        {day.isOff && <input placeholder="휴무 사유..." value={day.offReason || ""} onChange={function(e) { set("offReason", e.target.value); }} style={Object.assign({}, T.input, { marginTop: 8 })} />}
       </div>
 
       {!day.isOff && (
         <div style={T.card}>
           <div style={T.label}>⏰ 근무 시간</div>
-          <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-            <div style={{ flex:1 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <div style={{ flex: 1 }}>
               <div style={T.subLabel}>출근</div>
-              <input type="time" value={day.startTime||""} onChange={e => set("startTime", e.target.value)} style={T.input} />
+              <input type="time" value={day.startTime || ""} onChange={function(e) { set("startTime", e.target.value); }} style={T.input} />
             </div>
-            <div style={{ fontSize:18, paddingTop:16 }}>→</div>
-            <div style={{ flex:1 }}>
+            <div style={{ fontSize: 18, paddingTop: 16 }}>→</div>
+            <div style={{ flex: 1 }}>
               <div style={T.subLabel}>퇴근</div>
-              <input type="time" value={day.endTime||""} onChange={e => set("endTime", e.target.value)} style={T.input} />
+              <input type="time" value={day.endTime || ""} onChange={function(e) { set("endTime", e.target.value); }} style={T.input} />
             </div>
           </div>
-          {worked>0 && (
+          {worked > 0 && (
             <div style={T.resultBox}>
               <span>⏱ 근무: <b>{worked}h</b></span>
-              {settings.dailyGoalHours>0 && <span>목표 {settings.dailyGoalHours}h {worked>=settings.dailyGoalHours?"✅":`❌ (${(settings.dailyGoalHours-worked).toFixed(1)}h 부족)`}</span>}
+              {settings.dailyGoalHours > 0 && <span>목표 {settings.dailyGoalHours}h {worked >= settings.dailyGoalHours ? "✅" : ("❌ (" + (settings.dailyGoalHours - worked).toFixed(1) + "h 부족)")}</span>}
             </div>
           )}
           {motivation && <div style={T.motivationBox}>{motivation}</div>}
@@ -400,42 +421,42 @@ function DayInput({ date, setDate, data, updateDay, T }) {
 
       <div style={T.card}>
         <div style={T.label}>💰 수입 내역</div>
-        {income.map((item, i) => {
-          const catObj = settings.incomeCategories.find(c => (c.name||c)===item.category);
-          const catColor = catObj?.color || "#818cf8";
+        {income.map(function(item, i) {
+          const catObj = settings.incomeCategories.find(function(c) { return (c.name || c) === item.category; });
+          const catColor = (catObj && catObj.color) || "#818cf8";
           return (
-            <div key={i} style={{ marginBottom:10 }}>
-              <div style={{ display:"flex", gap:6, marginBottom:4, alignItems:"center" }}>
-                <select value={item.category||""} onChange={e => { const next=[...income]; next[i]={...next[i],category:e.target.value}; set("incomeItems",next); }} style={{ ...T.input, flex:1.2, borderLeft:`3px solid ${catColor}` }}>
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+                <select value={item.category || ""} onChange={function(e) { const next = income.slice(); next[i] = Object.assign({}, next[i], { category: e.target.value }); set("incomeItems", next); }} style={Object.assign({}, T.input, { flex: 1.2, borderLeft: "3px solid " + catColor })}>
                   <option value="">카테고리</option>
-                  {settings.incomeCategories.map(c => <option key={c.name||c} value={c.name||c}>{c.name||c}</option>)}
+                  {settings.incomeCategories.map(function(c) { return <option key={c.name || c} value={c.name || c}>{c.name || c}</option>; })}
                 </select>
-                {item.category==="기타수입" && <input placeholder="제목" value={item.title||""} onChange={e => { const next=[...income]; next[i]={...next[i],title:e.target.value}; set("incomeItems",next); }} style={{ ...T.input, flex:1.5 }} />}
-                <button onClick={() => set("incomeItems", income.filter((_,j)=>j!==i))} style={T.delBtn}>✕</button>
+                {item.category === "기타수입" && <input placeholder="제목" value={item.title || ""} onChange={function(e) { const next = income.slice(); next[i] = Object.assign({}, next[i], { title: e.target.value }); set("incomeItems", next); }} style={Object.assign({}, T.input, { flex: 1.5 })} />}
+                <button onClick={function() { set("incomeItems", income.filter(function(_, j) { return j !== i; })); }} style={T.delBtn}>✕</button>
               </div>
-              <div style={{ display:"flex", gap:6, alignItems:"center" }}>
-                <input type="number" placeholder="금액" value={item.amount||""} onChange={e => { const next=[...income]; next[i]={...next[i],amount:e.target.value}; set("incomeItems",next); }} style={{ ...T.input, flex:1 }} />
-                <label style={{ display:"flex", alignItems:"center", gap:3, fontSize:11, whiteSpace:"nowrap" }}>
-                  <input type="checkbox" checked={!!item.taxable} onChange={e => { const next=[...income]; next[i]={...next[i],taxable:e.target.checked}; set("incomeItems",next); }} />3.3%
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <input type="number" placeholder="금액" value={item.amount || ""} onChange={function(e) { const next = income.slice(); next[i] = Object.assign({}, next[i], { amount: e.target.value }); set("incomeItems", next); }} style={Object.assign({}, T.input, { flex: 1 })} />
+                <label style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 11, whiteSpace: "nowrap" }}>
+                  <input type="checkbox" checked={!!item.taxable} onChange={function(e) { const next = income.slice(); next[i] = Object.assign({}, next[i], { taxable: e.target.checked }); set("incomeItems", next); }} />3.3%
                 </label>
               </div>
-              {catObj?.settlementType==="manual" && (
-                <div style={{ marginTop:4, display:"flex", alignItems:"center", gap:6 }}>
-                  <span style={{ fontSize:11, color:T.muted, whiteSpace:"nowrap" }}>🗓 정산 예정일</span>
-                  <input type="date" value={item.settlementDate||""} onChange={e => { const next=[...income]; next[i]={...next[i],settlementDate:e.target.value}; set("incomeItems",next); }} style={{ ...T.input, flex:1 }} />
+              {catObj && catObj.settlementType === "manual" && (
+                <div style={{ marginTop: 4, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ fontSize: 11, color: T.muted, whiteSpace: "nowrap" }}>🗓 정산 예정일</span>
+                  <input type="date" value={item.settlementDate || ""} onChange={function(e) { const next = income.slice(); next[i] = Object.assign({}, next[i], { settlementDate: e.target.value }); set("incomeItems", next); }} style={Object.assign({}, T.input, { flex: 1 })} />
                 </div>
               )}
-              {catObj?.settlementType && catObj.settlementType!=="manual" && item.amount && (
-                <div style={{ marginTop:4, fontSize:11, color:catColor }}>🗓 정산 예정: {calcSettlementDate(date, catObj)}</div>
+              {catObj && catObj.settlementType && catObj.settlementType !== "manual" && item.amount && (
+                <div style={{ marginTop: 4, fontSize: 11, color: catColor }}>🗓 정산 예정: {calcSettlementDate(date, catObj, settings.holidays)}</div>
               )}
             </div>
           );
         })}
-        <button onClick={() => set("incomeItems", [...income, { category:"", title:"", amount:"", taxable:false }])} style={T.addBtn}>+ 수입 추가</button>
-        {totalIncome>0 && (
+        <button onClick={function() { set("incomeItems", income.concat([{ category: "", title: "", amount: "", taxable: false }])); }} style={T.addBtn}>+ 수입 추가</button>
+        {totalIncome > 0 && (
           <div style={T.resultBox}>
             <div>총 수입: <b>₩{fmt(totalIncome)}</b></div>
-            <div>세후: <b style={{ color:"#4ade80" }}>₩{fmt(Math.round(taxDeducted))}</b></div>
+            <div>세후: <b style={{ color: "#4ade80" }}>₩{fmt(Math.round(taxDeducted))}</b></div>
           </div>
         )}
       </div>
@@ -444,86 +465,95 @@ function DayInput({ date, setDate, data, updateDay, T }) {
         <div style={T.label}>💸 지출 내역</div>
 
         {pendingFixed.length > 0 && (
-          <div style={{ marginBottom:12, padding:"10px 12px", background:"rgba(249,115,22,0.08)", borderRadius:10, border:"1px solid rgba(249,115,22,0.3)" }}>
-            <div style={{ fontSize:12, color:"#f97316", fontWeight:600, marginBottom:8 }}>📌 납부 예정 고정 지출</div>
-            {pendingFixed.map(fe => (
-              <div key={fe.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:6 }}>
-                <div>
-                  <span style={{ fontSize:13 }}>{fe.name}</span>
-                  <span style={{ fontSize:11, color:T.muted, marginLeft:6 }}>₩{fmt(fe.amount)}</span>
+          <div style={{ marginBottom: 12, padding: "10px 12px", background: "rgba(249,115,22,0.08)", borderRadius: 10, border: "1px solid rgba(249,115,22,0.3)" }}>
+            <div style={{ fontSize: 12, color: "#f97316", fontWeight: 600, marginBottom: 8 }}>📌 납부 예정 고정 지출</div>
+            {pendingFixed.map(function(fe) {
+              return (
+                <div key={fe.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                  <div>
+                    <span style={{ fontSize: 13 }}>{fe.name}</span>
+                    <span style={{ fontSize: 11, color: T.muted, marginLeft: 6 }}>₩{fmt(fe.amount)}</span>
+                  </div>
+                  <button onClick={function() { checkFixedExpense(fe); }} style={{ padding: "4px 10px", background: "rgba(74,222,128,0.15)", border: "1px solid rgba(74,222,128,0.3)", borderRadius: 6, color: "#4ade80", fontSize: 12, cursor: "pointer" }}>납부 ✓</button>
                 </div>
-                <button onClick={() => checkFixedExpense(fe)} style={{ padding:"4px 10px", background:"rgba(74,222,128,0.15)", border:"1px solid rgba(74,222,128,0.3)", borderRadius:6, color:"#4ade80", fontSize:12, cursor:"pointer" }}>납부 ✓</button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
-        {expenseItems.map((item, i) => (
-          <div key={i} style={{ marginBottom:10, borderLeft: item.isFixed ? "3px solid #f97316" : "3px solid transparent", paddingLeft: item.isFixed ? 8 : 0 }}>
-            <div style={{ display:"flex", gap:6, marginBottom:4, alignItems:"center" }}>
-              <select value={item.category||""} onChange={e => {
-                const next=[...expenseItems]; next[i]={...next[i],category:e.target.value==="__direct__"?"":e.target.value}; set("expenseItems",next);
-              }} style={{ ...T.input, flex:1 }}>
-                <option value="">카테고리 선택</option>
-                {settings.expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                <option value="고정지출">고정지출</option>
-                <option value="기타">기타</option>
-              </select>
-              <button onClick={() => set("expenseItems", expenseItems.filter((_,j)=>j!==i))} style={T.delBtn}>✕</button>
+        {expenseItems.map(function(item, i) {
+          return (
+            <div key={i} style={{ marginBottom: 10, borderLeft: item.isFixed ? "3px solid #f97316" : "3px solid transparent", paddingLeft: item.isFixed ? 8 : 0 }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 4, alignItems: "center" }}>
+                <select value={item.category || ""} onChange={function(e) { const next = expenseItems.slice(); next[i] = Object.assign({}, next[i], { category: e.target.value === "__direct__" ? "" : e.target.value }); set("expenseItems", next); }} style={Object.assign({}, T.input, { flex: 1 })}>
+                  <option value="">카테고리 선택</option>
+                  {settings.expenseCategories.map(function(c) { return <option key={c} value={c}>{c}</option>; })}
+                  <option value="고정지출">고정지출</option>
+                  <option value="기타">기타</option>
+                </select>
+                <button onClick={function() { set("expenseItems", expenseItems.filter(function(_, j) { return j !== i; })); }} style={T.delBtn}>✕</button>
+              </div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input placeholder="제목 (선택)" value={item.title || ""} onChange={function(e) { const next = expenseItems.slice(); next[i] = Object.assign({}, next[i], { title: e.target.value }); set("expenseItems", next); }} style={Object.assign({}, T.input, { flex: 1.5 })} />
+                <input type="number" placeholder="금액" value={item.amount || ""} onChange={function(e) { const next = expenseItems.slice(); next[i] = Object.assign({}, next[i], { amount: e.target.value }); set("expenseItems", next); }} style={Object.assign({}, T.input, { flex: 1 })} />
+              </div>
             </div>
-            <div style={{ display:"flex", gap:6 }}>
-              <input placeholder="제목 (선택)" value={item.title||""} onChange={e => { const next=[...expenseItems]; next[i]={...next[i],title:e.target.value}; set("expenseItems",next); }} style={{ ...T.input, flex:1.5 }} />
-              <input type="number" placeholder="금액" value={item.amount||""} onChange={e => { const next=[...expenseItems]; next[i]={...next[i],amount:e.target.value}; set("expenseItems",next); }} style={{ ...T.input, flex:1 }} />
-            </div>
-          </div>
-        ))}
-        <button onClick={() => set("expenseItems", [...expenseItems, { category:"", title:"", amount:"" }])} style={T.addBtn}>+ 지출 추가</button>
-        {totalExpense>0 && <div style={{ ...T.resultBox, marginTop:10 }}>총 지출: <b style={{ color:"#f87171" }}>₩{fmt(totalExpense)}</b></div>}
+          );
+        })}
+        <button onClick={function() { set("expenseItems", expenseItems.concat([{ category: "", title: "", amount: "" }])); }} style={T.addBtn}>+ 지출 추가</button>
+        {totalExpense > 0 && <div style={Object.assign({}, T.resultBox, { marginTop: 10 })}>총 지출: <b style={{ color: "#f87171" }}>₩{fmt(totalExpense)}</b></div>}
       </div>
 
       <div style={T.card}>
         <div style={T.label}>🌤 날씨 & 하루 메모</div>
-        <div style={{ display:"flex", gap:8, marginBottom:10 }}>
-          {WEATHER_OPTIONS.map(w => (
-            <button key={w.label} onClick={() => set("weather", w.label)} style={{ fontSize:22, background:day.weather===w.label?"rgba(129,140,248,0.15)":"rgba(255,255,255,0.05)", border:day.weather===w.label?"2px solid #818cf8":"2px solid transparent", borderRadius:10, padding:"6px 10px", cursor:"pointer" }}>{w.icon}</button>
-          ))}
+        <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+          {WEATHER_OPTIONS.map(function(w) {
+            return <button key={w.label} onClick={function() { set("weather", w.label); }} style={{ fontSize: 22, background: day.weather === w.label ? "rgba(129,140,248,0.15)" : "rgba(255,255,255,0.05)", border: day.weather === w.label ? "2px solid #818cf8" : "2px solid transparent", borderRadius: 10, padding: "6px 10px", cursor: "pointer" }}>{w.icon}</button>;
+          })}
         </div>
-        <textarea placeholder="오늘 하루 어땠어요? ✍️" value={day.memo||""} onChange={e => set("memo", e.target.value)} style={{ ...T.textarea }} rows={4} />
-        <div style={{ marginTop:10 }}>
+        <textarea placeholder="오늘 하루 어땠어요? ✍️" value={day.memo || ""} onChange={function(e) { set("memo", e.target.value); }} style={T.textarea} rows={4} />
+        <div style={{ marginTop: 10 }}>
           <div style={T.subLabel}>📸 사진 첨부</div>
-          <label style={{ ...T.addBtn, display:"inline-block", marginTop:6, cursor:"pointer" }}>
+          <label style={Object.assign({}, T.addBtn, { display: "inline-block", marginTop: 6, cursor: "pointer" })}>
             📷 사진 추가
-            <input type="file" accept="image/*" multiple style={{ display:"none" }} onChange={e => {
-              Array.from(e.target.files).forEach(file => {
+            <input type="file" accept="image/*" multiple style={{ display: "none" }} onChange={function(e) {
+              Array.prototype.forEach.call(e.target.files, function(file) {
                 const reader = new FileReader();
-                reader.onload = ev => updateDay(date, d => ({ ...d, photos: [...(d.photos||[]), { data:ev.target.result, name:file.name }] }));
+                reader.onload = function(ev) {
+                  updateDay(date, function(d) {
+                    const photos = (d.photos || []).concat([{ data: ev.target.result, name: file.name }]);
+                    return Object.assign({}, d, { photos: photos });
+                  });
+                };
                 reader.readAsDataURL(file);
               });
             }} />
           </label>
-          {(day.photos||[]).length>0 && (
-            <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginTop:8 }}>
-              {(day.photos||[]).map((p,i) => (
-                <div key={i} style={{ position:"relative" }}>
-                  <img src={p.data} alt={p.name} style={{ width:72, height:72, objectFit:"cover", borderRadius:8, border:"1px solid rgba(255,255,255,0.1)" }} />
-                  <button onClick={() => updateDay(date, d => ({ ...d, photos:(d.photos||[]).filter((_,j)=>j!==i) }))} style={{ position:"absolute", top:-6, right:-6, background:"#ef4444", border:"none", borderRadius:"50%", width:18, height:18, color:"#fff", fontSize:10, cursor:"pointer", display:"flex", alignItems:"center", justifyContent:"center" }}>✕</button>
-                </div>
-              ))}
+          {(day.photos || []).length > 0 && (
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+              {(day.photos || []).map(function(p, i) {
+                return (
+                  <div key={i} style={{ position: "relative" }}>
+                    <img src={p.data} alt={p.name} style={{ width: 72, height: 72, objectFit: "cover", borderRadius: 8, border: "1px solid rgba(255,255,255,0.1)" }} />
+                    <button onClick={function() { updateDay(date, function(d) { return Object.assign({}, d, { photos: (d.photos || []).filter(function(_, j) { return j !== i; }) }); }); }} style={{ position: "absolute", top: -6, right: -6, background: "#ef4444", border: "none", borderRadius: "50%", width: 18, height: 18, color: "#fff", fontSize: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center" }}>✕</button>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {(totalIncome>0 || worked>0 || totalExpense>0) && (
+      {(totalIncome > 0 || worked > 0 || totalExpense > 0) && (
         <div style={T.summaryCard}>
           <div style={T.summaryTitle}>📋 오늘 요약</div>
-          <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-            <SI label="근무" value={`${worked}h`} />
-            <SI label="수입" value={`₩${fmt(totalIncome)}`} />
-            <SI label="실수령" value={`₩${fmt(Math.round(taxDeducted))}`} color="#4ade80" />
-            <SI label="지출" value={`₩${fmt(totalExpense)}`} color="#f87171" />
-            <SI label="순수익" value={`₩${fmt(Math.round(taxDeducted)-totalExpense)}`} color={taxDeducted-totalExpense>=0?"#4ade80":"#f87171"} />
-            {worked>0&&totalIncome>0 && <SI label="시급" value={`₩${fmt(Math.round(totalIncome/worked))}`} color="#facc15" />}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+            <SI label="근무" value={worked + "h"} />
+            <SI label="수입" value={"₩" + fmt(totalIncome)} />
+            <SI label="실수령" value={"₩" + fmt(Math.round(taxDeducted))} color="#4ade80" />
+            <SI label="지출" value={"₩" + fmt(totalExpense)} color="#f87171" />
+            <SI label="순수익" value={"₩" + fmt(Math.round(taxDeducted) - totalExpense)} color={(taxDeducted - totalExpense >= 0) ? "#4ade80" : "#f87171"} />
+            {worked > 0 && totalIncome > 0 && <SI label="시급" value={"₩" + fmt(Math.round(totalIncome / worked))} color="#facc15" />}
           </div>
         </div>
       )}
@@ -531,54 +561,55 @@ function DayInput({ date, setDate, data, updateDay, T }) {
   );
 }
 
-function SI({ label, value, color }) {
+function SI(props) {
   return (
-    <div style={{ textAlign:"center" }}>
-      <div style={{ fontSize:11, color:"#64748b", marginBottom:2 }}>{label}</div>
-      <div style={{ fontSize:14, fontWeight:700, color:color||"#e2e8f0" }}>{value}</div>
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontSize: 11, color: "#64748b", marginBottom: 2 }}>{props.label}</div>
+      <div style={{ fontSize: 14, fontWeight: 700, color: props.color || "#e2e8f0" }}>{props.value}</div>
     </div>
   );
 }
 
-function CalendarView({ data, calMonth, setCalMonth, setSelectedDate, T }) {
-  const { year, month } = calMonth;
-  const { settings, days } = data;
+function CalendarView(props) {
+  const data = props.data, calMonth = props.calMonth, setCalMonth = props.setCalMonth, setSelectedDate = props.setSelectedDate, T = props.T;
+  const year = calMonth.year, month = calMonth.month;
+  const settings = data.settings, days = data.days;
   const firstDay = new Date(year, month, 1).getDay();
-  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = toYMD(new Date());
   const cells = [];
-  for (let i=0;i<firstDay;i++) cells.push(null);
-  for (let d=1;d<=daysInMonth;d++) cells.push(d);
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={T.card}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-          <button onClick={() => setCalMonth(p => p.month===0?{year:p.year-1,month:11}:{...p,month:p.month-1})} style={T.navBtn}>‹</button>
-          <span style={{ fontSize:16, fontWeight:700 }}>{year}년 {month+1}월</span>
-          <button onClick={() => setCalMonth(p => p.month===11?{year:p.year+1,month:0}:{...p,month:p.month+1})} style={T.navBtn}>›</button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+          <button onClick={function() { setCalMonth(function(p) { return p.month === 0 ? { year: p.year - 1, month: 11 } : Object.assign({}, p, { month: p.month - 1 }); }); }} style={T.navBtn}>‹</button>
+          <span style={{ fontSize: 16, fontWeight: 700 }}>{year}년 {month + 1}월</span>
+          <button onClick={function() { setCalMonth(function(p) { return p.month === 11 ? { year: p.year + 1, month: 0 } : Object.assign({}, p, { month: p.month + 1 }); }); }} style={T.navBtn}>›</button>
         </div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", gap:3 }}>
-          {WEEKDAYS.map(d => <div key={d} style={{ textAlign:"center", fontSize:11, color:T.muted, padding:"4px 0" }}>{d}</div>)}
-          {cells.map((d,i) => {
-            if (!d) return <div key={`e${i}`} />;
-            const ds = `${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-            const dd = days[ds]||{};
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 3 }}>
+          {WEEKDAYS.map(function(d) { return <div key={d} style={{ textAlign: "center", fontSize: 11, color: T.muted, padding: "4px 0" }}>{d}</div>; })}
+          {cells.map(function(d, i) {
+            if (!d) return <div key={"e" + i} />;
+            const ds = year + "-" + pad2(month + 1) + "-" + pad2(d);
+            const dd = days[ds] || {};
             const worked = calcHours(dd.startTime, dd.endTime);
-            const hasIncome = (dd.incomeItems||[]).length>0;
-            const isToday = ds===today;
-            const goalMet = worked>=settings.dailyGoalHours;
-            const isFixed = settings.fixedOffDays.includes(new Date(ds+"T00:00:00").getDay());
+            const hasIncome = (dd.incomeItems || []).length > 0;
+            const isToday = ds === today;
+            const goalMet = worked >= settings.dailyGoalHours;
+            const isFixed = settings.fixedOffDays.indexOf(new Date(ds + "T00:00:00").getDay()) !== -1;
             const hasPendingFixed = getPendingFixedExpenses(ds, data).length > 0;
             return (
-              <div key={ds} onClick={() => setSelectedDate(ds)} style={{ minHeight:52, borderRadius:6, display:"flex", flexDirection:"column", alignItems:"center", padding:"4px 2px", cursor:"pointer", gap:1, background:isToday?"rgba(129,140,248,0.15)":dd.isOff?"rgba(248,113,113,0.08)":isFixed&&!dd.startTime?"rgba(100,116,139,0.08)":T.calCellBg, border:isToday?"1px solid rgba(129,140,248,0.4)":"1px solid transparent" }}>
-                <div style={{ fontSize:13, fontWeight:isToday?700:400 }}>{d}</div>
-                {worked>0 && <div style={{ fontSize:9, color:goalMet?"#4ade80":"#f87171" }}>{worked}h</div>}
-                {hasIncome && <div style={{ fontSize:9 }}>💰</div>}
-                {dd.isOff && <div style={{ fontSize:9 }}>🚫</div>}
-                {dd.weather && <div style={{ fontSize:9 }}>{WEATHER_OPTIONS.find(w=>w.label===dd.weather)?.icon}</div>}
-                {(dd.photos||[]).length>0 && <div style={{ fontSize:9 }}>📸</div>}
-                {hasPendingFixed && <div style={{ fontSize:9 }}>📌</div>}
+              <div key={ds} onClick={function() { setSelectedDate(ds); }} style={{ minHeight: 52, borderRadius: 6, display: "flex", flexDirection: "column", alignItems: "center", padding: "4px 2px", cursor: "pointer", gap: 1, background: isToday ? "rgba(129,140,248,0.15)" : dd.isOff ? "rgba(248,113,113,0.08)" : (isFixed && !dd.startTime) ? "rgba(100,116,139,0.08)" : T.calCellBg, border: isToday ? "1px solid rgba(129,140,248,0.4)" : "1px solid transparent" }}>
+                <div style={{ fontSize: 13, fontWeight: isToday ? 700 : 400 }}>{d}</div>
+                {worked > 0 && <div style={{ fontSize: 9, color: goalMet ? "#4ade80" : "#f87171" }}>{worked}h</div>}
+                {hasIncome && <div style={{ fontSize: 9 }}>💰</div>}
+                {dd.isOff && <div style={{ fontSize: 9 }}>🚫</div>}
+                {dd.weather && <div style={{ fontSize: 9 }}>{(WEATHER_OPTIONS.find(function(w) { return w.label === dd.weather; }) || {}).icon}</div>}
+                {(dd.photos || []).length > 0 && <div style={{ fontSize: 9 }}>📸</div>}
+                {hasPendingFixed && <div style={{ fontSize: 9 }}>📌</div>}
               </div>
             );
           })}
@@ -589,54 +620,56 @@ function CalendarView({ data, calMonth, setCalMonth, setSelectedDate, T }) {
   );
 }
 
-function MonthSummary({ data, year, month, T }) {
-  const { days, settings } = data;
-  const prefix = `${year}-${String(month+1).padStart(2,"0")}`;
-  let totalWorked=0, totalIncome=0, totalTaxed=0, totalExpense=0, workDays=0;
-  Object.entries(days).filter(([k])=>k.startsWith(prefix)).forEach(([,d]) => {
-    const w=calcHours(d.startTime,d.endTime);
-    if (w>0) { totalWorked+=w; workDays++; }
-    (d.incomeItems||[]).forEach(i => { const a=Number(i.amount)||0; totalIncome+=a; totalTaxed+=i.taxable?a*(1-settings.taxRate/100):a; });
-    (d.expenseItems||[]).forEach(i => totalExpense+=Number(i.amount)||0);
+function MonthSummary(props) {
+  const data = props.data, year = props.year, month = props.month, T = props.T;
+  const days = data.days, settings = data.settings;
+  const prefix = year + "-" + pad2(month + 1);
+  let totalWorked = 0, totalIncome = 0, totalTaxed = 0, totalExpense = 0, workDays = 0;
+  Object.keys(days).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
+    const d = days[k];
+    const w = calcHours(d.startTime, d.endTime);
+    if (w > 0) { totalWorked += w; workDays++; }
+    (d.incomeItems || []).forEach(function(i) { const a = Number(i.amount) || 0; totalIncome += a; totalTaxed += i.taxable ? a * (1 - settings.taxRate / 100) : a; });
+    (d.expenseItems || []).forEach(function(i) { totalExpense += Number(i.amount) || 0; });
   });
-  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
   const now = new Date();
-  const isCurrent = now.getFullYear()===year && now.getMonth()===month;
+  const isCurrent = now.getFullYear() === year && now.getMonth() === month;
   let predicted = null;
-  if (isCurrent && workDays>0) {
-    let remain=0;
-    for (let d=now.getDate()+1;d<=daysInMonth;d++) {
-      const ds=`${year}-${String(month+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
-      if (!settings.fixedOffDays.includes(new Date(ds+"T00:00:00").getDay()) && !(days[ds]?.isOff)) remain++;
+  if (isCurrent && workDays > 0) {
+    let remain = 0;
+    for (let d = now.getDate() + 1; d <= daysInMonth; d++) {
+      const ds = year + "-" + pad2(month + 1) + "-" + pad2(d);
+      if (settings.fixedOffDays.indexOf(new Date(ds + "T00:00:00").getDay()) === -1 && !((days[ds] || {}).isOff)) remain++;
     }
-    predicted = totalIncome + (totalIncome/workDays)*remain;
+    predicted = totalIncome + (totalIncome / workDays) * remain;
   }
   const goalIncome = settings.monthlyGoalIncome || 0;
-  const goalPct = goalIncome>0 ? Math.min(Math.round((totalTaxed/goalIncome)*100),100) : null;
+  const goalPct = goalIncome > 0 ? Math.min(Math.round((totalTaxed / goalIncome) * 100), 100) : null;
   return (
     <div style={T.summaryCard}>
-      <div style={T.summaryTitle}>{month+1}월 요약</div>
-      <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-        <SI label="근무일" value={`${workDays}일`} />
-        <SI label="총 근무" value={`${totalWorked.toFixed(1)}h`} />
-        <SI label="총 수입" value={`₩${fmt(Math.round(totalIncome))}`} />
-        <SI label="세후 수입" value={`₩${fmt(Math.round(totalTaxed))}`} color="#4ade80" />
-        <SI label="총 지출" value={`₩${fmt(Math.round(totalExpense))}`} color="#f87171" />
-        <SI label="순수익" value={`₩${fmt(Math.round(totalTaxed-totalExpense))}`} color={totalTaxed-totalExpense>=0?"#4ade80":"#f87171"} />
+      <div style={T.summaryTitle}>{month + 1}월 요약</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+        <SI label="근무일" value={workDays + "일"} />
+        <SI label="총 근무" value={totalWorked.toFixed(1) + "h"} />
+        <SI label="총 수입" value={"₩" + fmt(Math.round(totalIncome))} />
+        <SI label="세후 수입" value={"₩" + fmt(Math.round(totalTaxed))} color="#4ade80" />
+        <SI label="총 지출" value={"₩" + fmt(Math.round(totalExpense))} color="#f87171" />
+        <SI label="순수익" value={"₩" + fmt(Math.round(totalTaxed - totalExpense))} color={(totalTaxed - totalExpense >= 0) ? "#4ade80" : "#f87171"} />
       </div>
-      {goalPct!==null && (
-        <div style={{ marginTop:12 }}>
-          <div style={{ display:"flex", justifyContent:"space-between", fontSize:12, marginBottom:4 }}>
-            <span>월 목표 달성률</span><span style={{ color:"#facc15", fontWeight:700 }}>{goalPct}%</span>
+      {goalPct !== null && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+            <span>월 목표 달성률</span><span style={{ color: "#facc15", fontWeight: 700 }}>{goalPct}%</span>
           </div>
-          <div style={{ background:"rgba(255,255,255,0.08)", borderRadius:4, height:8 }}>
-            <div style={{ width:`${goalPct}%`, height:"100%", borderRadius:4, background:"linear-gradient(90deg,#818cf8,#facc15)", transition:"width 0.5s" }} />
+          <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 4, height: 8 }}>
+            <div style={{ width: goalPct + "%", height: "100%", borderRadius: 4, background: "linear-gradient(90deg,#818cf8,#facc15)", transition: "width 0.5s" }} />
           </div>
-          <div style={{ fontSize:11, color:T.muted, marginTop:4 }}>목표: ₩{fmt(goalIncome)}</div>
+          <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>목표: ₩{fmt(goalIncome)}</div>
         </div>
       )}
-      {predicted!==null && (
-        <div style={{ marginTop:10, padding:"8px 12px", background:"rgba(250,204,21,0.08)", borderRadius:8, fontSize:13, color:"#facc15", textAlign:"center" }}>
+      {predicted !== null && (
+        <div style={{ marginTop: 10, padding: "8px 12px", background: "rgba(250,204,21,0.08)", borderRadius: 8, fontSize: 13, color: "#facc15", textAlign: "center" }}>
           📈 이번 달 예상 수입: <b>₩{fmt(Math.round(predicted))}</b>
         </div>
       )}
@@ -644,501 +677,549 @@ function MonthSummary({ data, year, month, T }) {
   );
 }
 
-function SettlementView({ data, T }) {
+function SettlementView(props) {
+  const data = props.data, T = props.T;
   const today = toYMD(new Date());
   const settlements = buildSettlements(data);
-  const upcoming = settlements.filter(s => s.settlDate >= today);
-  const past = settlements.filter(s => s.settlDate < today);
-  const totalUpcoming = upcoming.reduce((s,i) => s+i.netAmt, 0);
-  const totalPast = past.reduce((s,i) => s+i.netAmt, 0);
+  const upcoming = settlements.filter(function(s) { return s.settlDate >= today; });
+  const past = settlements.filter(function(s) { return s.settlDate < today; });
+  const totalUpcoming = upcoming.reduce(function(s, i) { return s + i.netAmt; }, 0);
+  const totalPast = past.reduce(function(s, i) { return s + i.netAmt; }, 0);
+
+  function groupByDate(arr) {
+    const grouped = {};
+    arr.forEach(function(s) {
+      if (!grouped[s.settlDate]) grouped[s.settlDate] = [];
+      grouped[s.settlDate].push(s);
+    });
+    return grouped;
+  }
+
+  const upcomingGrouped = groupByDate(upcoming);
+  const upcomingDates = Object.keys(upcomingGrouped).sort();
+  const pastGrouped = groupByDate(past);
+  const pastDates = Object.keys(pastGrouped).sort().reverse();
+
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={T.summaryCard}>
         <div style={T.summaryTitle}>💳 정산 현황</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(2,1fr)", gap:10 }}>
-          <SI label="예정 정산 합계" value={`₩${fmt(totalUpcoming)}`} color="#4ade80" />
-          <SI label="완료 정산 합계" value={`₩${fmt(totalPast)}`} color="#64748b" />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+          <SI label="예정 정산 합계" value={"₩" + fmt(totalUpcoming)} color="#4ade80" />
+          <SI label="완료 정산 합계" value={"₩" + fmt(totalPast)} color="#64748b" />
         </div>
       </div>
       <div style={T.card}>
-        {(() => {
-          const grouped = {};
-          upcoming.forEach(s => { if (!grouped[s.settlDate]) grouped[s.settlDate]=[]; grouped[s.settlDate].push(s); });
-          const dates = Object.keys(grouped).sort();
+        <div style={T.label}>⏳ 다가오는 정산 ({upcomingDates.length}일, {upcoming.length}건)</div>
+        {upcomingDates.length === 0 && <div style={{ fontSize: 13, color: T.muted }}>예정된 정산이 없어요</div>}
+        {upcomingDates.map(function(date) {
+          const items = upcomingGrouped[date];
+          const totalNet = items.reduce(function(s, i) { return s + i.netAmt; }, 0);
+          const totalAmt = items.reduce(function(s, i) { return s + i.amount; }, 0);
+          const isToday = date === today;
+          const dp = date.split("-").map(Number);
+          const d = new Date(dp[0], dp[1] - 1, dp[2]);
+          const tp = today.split("-").map(Number);
+          const t = new Date(tp[0], tp[1] - 1, tp[2]);
+          const diff = Math.round((d - t) / 86400000);
           return (
-            <>
-              <div style={T.label}>⏳ 다가오는 정산 ({dates.length}일, {upcoming.length}건)</div>
-              {dates.length===0 && <div style={{ fontSize:13, color:T.muted }}>예정된 정산이 없어요</div>}
-              {dates.map(date => {
-                const items = grouped[date];
-                const totalNet = items.reduce((s,i)=>s+i.netAmt,0);
-                const totalAmt = items.reduce((s,i)=>s+i.amount,0);
-                const isToday = date===today;
-                const dp = date.split("-").map(Number);
-                const d = new Date(dp[0],dp[1]-1,dp[2]);
-                const tp = today.split("-").map(Number);
-                const t = new Date(tp[0],tp[1]-1,tp[2]);
-                const diff = Math.round((d-t)/86400000);
+            <div key={date} style={{ borderRadius: 10, marginBottom: 10, background: isToday ? "rgba(74,222,128,0.08)" : "rgba(255,255,255,0.03)", border: "1px solid " + (isToday ? "rgba(74,222,128,0.3)" : "rgba(255,255,255,0.06)"), overflow: "hidden" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", borderBottom: items.length > 1 ? "1px solid rgba(255,255,255,0.06)" : "none" }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>
+                    {date.slice(5).replace("-", "/")} ({WEEKDAYS[d.getDay()]})
+                    {isToday && <span style={{ color: "#4ade80", marginLeft: 6 }}>● 오늘!</span>}
+                    {diff === 1 && <span style={{ color: "#facc15", marginLeft: 6 }}>● 내일!</span>}
+                    {diff > 1 && diff <= 7 && <span style={{ color: T.muted, marginLeft: 6 }}>{diff}일 후</span>}
+                  </div>
+                  <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>{items.length}건</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  {totalAmt !== totalNet && <div style={{ fontSize: 11, color: T.muted, textDecoration: "line-through" }}>₩{fmt(totalAmt)}</div>}
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "#4ade80" }}>₩{fmt(totalNet)}</div>
+                </div>
+              </div>
+              {items.map(function(s, i) {
                 return (
-                  <div key={date} style={{ borderRadius:10, marginBottom:10, background:isToday?"rgba(74,222,128,0.08)":"rgba(255,255,255,0.03)", border:`1px solid ${isToday?"rgba(74,222,128,0.3)":"rgba(255,255,255,0.06)"}`, overflow:"hidden" }}>
-                    <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", borderBottom:items.length>1?"1px solid rgba(255,255,255,0.06)":"none" }}>
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 12px", borderBottom: i < items.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none", background: "rgba(0,0,0,0.1)" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: "50%", background: s.color, flexShrink: 0 }} />
                       <div>
-                        <div style={{ fontSize:13, fontWeight:700 }}>
-                          {date.slice(5).replace("-","/")} ({WEEKDAYS[d.getDay()]})
-                          {isToday && <span style={{ color:"#4ade80", marginLeft:6 }}>● 오늘!</span>}
-                          {diff===1 && <span style={{ color:"#facc15", marginLeft:6 }}>● 내일!</span>}
-                          {diff>1&&diff<=7 && <span style={{ color:T.muted, marginLeft:6 }}>{diff}일 후</span>}
-                        </div>
-                        <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>{items.length}건</div>
-                      </div>
-                      <div style={{ textAlign:"right" }}>
-                        {totalAmt!==totalNet && <div style={{ fontSize:11, color:T.muted, textDecoration:"line-through" }}>₩{fmt(totalAmt)}</div>}
-                        <div style={{ fontSize:16, fontWeight:800, color:"#4ade80" }}>₩{fmt(totalNet)}</div>
+                        <div style={{ fontSize: 12 }}>{s.category}{s.title ? (" · " + s.title) : ""}</div>
+                        <div style={{ fontSize: 10, color: T.muted }}>일한 날: {s.workDate.slice(5).replace("-", "/")}</div>
                       </div>
                     </div>
-                    {items.map((s,i) => (
-                      <div key={i} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"7px 12px", borderBottom:i<items.length-1?"1px solid rgba(255,255,255,0.04)":"none", background:"rgba(0,0,0,0.1)" }}>
-                        <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                          <div style={{ width:8, height:8, borderRadius:"50%", background:s.color, flexShrink:0 }} />
-                          <div>
-                            <div style={{ fontSize:12 }}>{s.category}{s.title?` · ${s.title}`:""}</div>
-                            <div style={{ fontSize:10, color:T.muted }}>일한 날: {s.workDate.slice(5).replace("-","/")}</div>
-                          </div>
-                        </div>
-                        <div style={{ fontSize:13, fontWeight:600, color:"#4ade80" }}>₩{fmt(s.netAmt)}</div>
-                      </div>
-                    ))}
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#4ade80" }}>₩{fmt(s.netAmt)}</div>
                   </div>
                 );
               })}
-            </>
+            </div>
           );
-        })()}
+        })}
       </div>
-      {past.length>0 && (
+      {past.length > 0 && (
         <div style={T.card}>
-          {(() => {
-            const grouped = {};
-            past.forEach(s => { if (!grouped[s.settlDate]) grouped[s.settlDate]=[]; grouped[s.settlDate].push(s); });
-            const dates = Object.keys(grouped).sort().reverse();
+          <div style={T.label}>✅ 완료된 정산 ({pastDates.length}일, {past.length}건)</div>
+          {pastDates.map(function(date) {
+            const items = pastGrouped[date];
+            const totalNet = items.reduce(function(s, i) { return s + i.netAmt; }, 0);
+            const dp = date.split("-").map(Number);
+            const d = new Date(dp[0], dp[1] - 1, dp[2]);
             return (
-              <>
-                <div style={T.label}>✅ 완료된 정산 ({dates.length}일, {past.length}건)</div>
-                {dates.map(date => {
-                  const items = grouped[date];
-                  const totalNet = items.reduce((s,i)=>s+i.netAmt,0);
-                  const dp = date.split("-").map(Number);
-                  const d = new Date(dp[0],dp[1]-1,dp[2]);
+              <div key={date} style={{ borderRadius: 10, marginBottom: 8, background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.04)", overflow: "hidden", opacity: 0.7 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", borderBottom: items.length > 1 ? "1px solid rgba(255,255,255,0.04)" : "none" }}>
+                  <div style={{ fontSize: 12, fontWeight: 600 }}>{date.slice(5).replace("-", "/")} ({WEEKDAYS[d.getDay()]})</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: T.muted }}>₩{fmt(totalNet)}</div>
+                </div>
+                {items.map(function(s, i) {
                   return (
-                    <div key={date} style={{ borderRadius:10, marginBottom:8, background:"rgba(255,255,255,0.02)", border:"1px solid rgba(255,255,255,0.04)", overflow:"hidden", opacity:0.7 }}>
-                      <div style={{ display:"flex", justifyContent:"space-between", padding:"8px 12px", borderBottom:items.length>1?"1px solid rgba(255,255,255,0.04)":"none" }}>
-                        <div style={{ fontSize:12, fontWeight:600 }}>{date.slice(5).replace("-","/")} ({WEEKDAYS[d.getDay()]})</div>
-                        <div style={{ fontSize:13, fontWeight:700, color:T.muted }}>₩{fmt(totalNet)}</div>
+                    <div key={i} style={{ display: "flex", justifyContent: "space-between", padding: "6px 12px", background: "rgba(0,0,0,0.1)", borderBottom: i < items.length - 1 ? "1px solid rgba(255,255,255,0.03)" : "none" }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <div style={{ width: 7, height: 7, borderRadius: "50%", background: s.color }} />
+                        <span style={{ fontSize: 11 }}>{s.category}{s.title ? (" · " + s.title) : ""}</span>
                       </div>
-                      {items.map((s,i) => (
-                        <div key={i} style={{ display:"flex", justifyContent:"space-between", padding:"6px 12px", background:"rgba(0,0,0,0.1)", borderBottom:i<items.length-1?"1px solid rgba(255,255,255,0.03)":"none" }}>
-                          <div style={{ display:"flex", alignItems:"center", gap:6 }}>
-                            <div style={{ width:7, height:7, borderRadius:"50%", background:s.color }} />
-                            <span style={{ fontSize:11 }}>{s.category}{s.title?` · ${s.title}`:""}</span>
-                          </div>
-                          <span style={{ fontSize:11, color:T.muted }}>₩{fmt(s.netAmt)}</span>
-                        </div>
-                      ))}
+                      <span style={{ fontSize: 11, color: T.muted }}>₩{fmt(s.netAmt)}</span>
                     </div>
                   );
                 })}
-              </>
+              </div>
             );
-          })()}
+          })}
         </div>
       )}
     </div>
   );
 }
 
-function StatsView({ data, T }) {
-  const { days, settings } = data;
-  const [viewYear, setViewYear] = useState(new Date().getFullYear());
-  let yearIncome=0, yearTaxed=0, yearExpense=0, yearWorked=0;
-  const monthlyStats = Array.from({length:12},(_,m) => {
-    const prefix=`${viewYear}-${String(m+1).padStart(2,"0")}`;
-    let inc=0,taxed=0,exp=0,worked=0;
-    Object.entries(days).filter(([k])=>k.startsWith(prefix)).forEach(([,d]) => {
-      const w=calcHours(d.startTime,d.endTime); worked+=w;
-      (d.incomeItems||[]).forEach(i => { const a=Number(i.amount)||0; inc+=a; taxed+=i.taxable?a*(1-settings.taxRate/100):a; });
-      (d.expenseItems||[]).forEach(i => exp+=Number(i.amount)||0);
+function StatsView(props) {
+  const data = props.data, T = props.T;
+  const days = data.days, settings = data.settings;
+  const [viewYear, setViewYear] = useState(function() { return new Date().getFullYear(); });
+  let yearIncome = 0, yearTaxed = 0, yearExpense = 0, yearWorked = 0;
+  const monthlyStats = [];
+  for (let m = 0; m < 12; m++) {
+    const prefix = viewYear + "-" + pad2(m + 1);
+    let inc = 0, taxed = 0, exp = 0, worked = 0;
+    Object.keys(days).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
+      const d = days[k];
+      const w = calcHours(d.startTime, d.endTime);
+      worked += w;
+      (d.incomeItems || []).forEach(function(i) { const a = Number(i.amount) || 0; inc += a; taxed += i.taxable ? a * (1 - settings.taxRate / 100) : a; });
+      (d.expenseItems || []).forEach(function(i) { exp += Number(i.amount) || 0; });
     });
-    yearIncome+=inc; yearTaxed+=taxed; yearExpense+=exp; yearWorked+=worked;
-    return { month:m+1, inc, taxed, exp, worked };
-  });
-  let streak=0;
-  for (const d of Object.keys(days).sort().reverse()) {
-    const w=calcHours(days[d].startTime,days[d].endTime);
-    if (w>=settings.dailyGoalHours&&settings.dailyGoalHours>0) streak++; else break;
+    yearIncome += inc; yearTaxed += taxed; yearExpense += exp; yearWorked += worked;
+    monthlyStats.push({ month: m + 1, inc: inc, taxed: taxed, exp: exp, worked: worked });
   }
-  const weekdayStats = Array.from({length:7},(_,i) => ({ day:i, totalIncome:0, count:0, totalWorked:0 }));
-  Object.entries(days).forEach(([ds,d]) => {
-    const dayIdx=new Date(ds+"T00:00:00").getDay();
-    const w=calcHours(d.startTime,d.endTime);
-    const inc=(d.incomeItems||[]).reduce((s,i)=>s+(Number(i.amount)||0),0);
-    if (w>0||inc>0) { weekdayStats[dayIdx].count++; weekdayStats[dayIdx].totalIncome+=inc; weekdayStats[dayIdx].totalWorked+=w; }
+  let streak = 0;
+  const sortedDayKeys = Object.keys(days).sort().reverse();
+  for (let idx = 0; idx < sortedDayKeys.length; idx++) {
+    const w = calcHours(days[sortedDayKeys[idx]].startTime, days[sortedDayKeys[idx]].endTime);
+    if (w >= settings.dailyGoalHours && settings.dailyGoalHours > 0) streak++; else break;
+  }
+  const weekdayStats = [];
+  for (let i = 0; i < 7; i++) weekdayStats.push({ day: i, totalIncome: 0, count: 0, totalWorked: 0 });
+  Object.keys(days).forEach(function(ds) {
+    const d = days[ds];
+    const dayIdx = new Date(ds + "T00:00:00").getDay();
+    const w = calcHours(d.startTime, d.endTime);
+    const inc = (d.incomeItems || []).reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
+    if (w > 0 || inc > 0) { weekdayStats[dayIdx].count++; weekdayStats[dayIdx].totalIncome += inc; weekdayStats[dayIdx].totalWorked += w; }
   });
-  const maxWDIncome=Math.max(...weekdayStats.map(w=>w.count>0?w.totalIncome/w.count:0),1);
+  const maxWDIncome = Math.max.apply(null, weekdayStats.map(function(w) { return w.count > 0 ? w.totalIncome / w.count : 0; }).concat([1]));
   const expByCat = {};
-  settings.expenseCategories.forEach(c => { expByCat[c]=0; });
-  Object.values(days).forEach(d => { (d.expenseItems||[]).forEach(i => { const c=i.category||"기타"; expByCat[c]=(expByCat[c]||0)+(Number(i.amount)||0); }); });
-  const maxInc=Math.max(...monthlyStats.map(m=>m.inc),1);
+  settings.expenseCategories.forEach(function(c) { expByCat[c] = 0; });
+  Object.keys(days).forEach(function(k) {
+    (days[k].expenseItems || []).forEach(function(i) {
+      const c = i.category || "기타";
+      expByCat[c] = (expByCat[c] || 0) + (Number(i.amount) || 0);
+    });
+  });
+  const maxInc = Math.max.apply(null, monthlyStats.map(function(m) { return m.inc; }).concat([1]));
+
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={T.card}>
-        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
-          <button onClick={() => setViewYear(y=>y-1)} style={T.navBtn}>‹</button>
-          <span style={{ fontWeight:700, fontSize:16 }}>{viewYear}년 통계</span>
-          <button onClick={() => setViewYear(y=>y+1)} style={T.navBtn}>›</button>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <button onClick={function() { setViewYear(function(y) { return y - 1; }); }} style={T.navBtn}>‹</button>
+          <span style={{ fontWeight: 700, fontSize: 16 }}>{viewYear}년 통계</span>
+          <button onClick={function() { setViewYear(function(y) { return y + 1; }); }} style={T.navBtn}>›</button>
         </div>
       </div>
       <div style={T.summaryCard}>
         <div style={T.summaryTitle}>🗓 {viewYear}년 전체</div>
-        <div style={{ display:"grid", gridTemplateColumns:"repeat(3,1fr)", gap:10 }}>
-          <SI label="총 근무" value={`${yearWorked.toFixed(0)}h`} />
-          <SI label="총 수입" value={`₩${fmt(Math.round(yearIncome))}`} />
-          <SI label="세후 수입" value={`₩${fmt(Math.round(yearTaxed))}`} color="#4ade80" />
-          <SI label="총 지출" value={`₩${fmt(Math.round(yearExpense))}`} color="#f87171" />
-          <SI label="순수익" value={`₩${fmt(Math.round(yearTaxed-yearExpense))}`} color={yearTaxed-yearExpense>=0?"#4ade80":"#f87171"} />
-          <SI label="연속달성" value={`${streak}일 🔥`} color="#facc15" />
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
+          <SI label="총 근무" value={yearWorked.toFixed(0) + "h"} />
+          <SI label="총 수입" value={"₩" + fmt(Math.round(yearIncome))} />
+          <SI label="세후 수입" value={"₩" + fmt(Math.round(yearTaxed))} color="#4ade80" />
+          <SI label="총 지출" value={"₩" + fmt(Math.round(yearExpense))} color="#f87171" />
+          <SI label="순수익" value={"₩" + fmt(Math.round(yearTaxed - yearExpense))} color={(yearTaxed - yearExpense >= 0) ? "#4ade80" : "#f87171"} />
+          <SI label="연속달성" value={streak + "일 🔥"} color="#facc15" />
         </div>
       </div>
       <div style={T.card}>
         <div style={T.label}>📊 월별 수입</div>
-        <div style={{ display:"flex", gap:4, alignItems:"flex-end", height:100, marginTop:8 }}>
-          {monthlyStats.map(m => (
-            <div key={m.month} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-              <div style={{ width:"100%", background:"linear-gradient(to top,#6366f1,#818cf8)", borderRadius:"3px 3px 0 0", height:`${Math.max((m.inc/maxInc)*80,m.inc>0?4:0)}px`, transition:"height 0.3s" }} />
-              <div style={{ fontSize:9, color:T.muted }}>{m.month}월</div>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div style={T.card}>
-        <div style={T.label}>📊 요일별 평균 수입</div>
-        <div style={{ display:"flex", gap:4, alignItems:"flex-end", height:80, marginTop:8 }}>
-          {weekdayStats.map(w => {
-            const avg=w.count>0?w.totalIncome/w.count:0;
+        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 100, marginTop: 8 }}>
+          {monthlyStats.map(function(m) {
             return (
-              <div key={w.day} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", gap:2 }}>
-                <div style={{ width:"100%", background:"linear-gradient(to top,#f97316,#facc15)", borderRadius:"3px 3px 0 0", height:`${Math.max((avg/maxWDIncome)*64,avg>0?4:0)}px`, transition:"height 0.3s" }} />
-                <div style={{ fontSize:9, color:T.muted }}>{WEEKDAYS[w.day]}</div>
+              <div key={m.month} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                <div style={{ width: "100%", background: "linear-gradient(to top,#6366f1,#818cf8)", borderRadius: "3px 3px 0 0", height: Math.max((m.inc / maxInc) * 80, m.inc > 0 ? 4 : 0) + "px", transition: "height 0.3s" }} />
+                <div style={{ fontSize: 9, color: T.muted }}>{m.month}월</div>
               </div>
             );
           })}
         </div>
-        <div style={{ marginTop:8, display:"flex", flexDirection:"column", gap:4 }}>
-          {weekdayStats.filter(w=>w.count>0).sort((a,b)=>(b.totalIncome/b.count)-(a.totalIncome/a.count)).slice(0,3).map((w,i) => (
-            <div key={w.day} style={{ display:"flex", justifyContent:"space-between", fontSize:12 }}>
-              <span>{i===0?"🥇":i===1?"🥈":"🥉"} {WEEKDAYS[w.day]}요일</span>
-              <span style={{ color:"#facc15" }}>평균 ₩{fmt(Math.round(w.totalIncome/w.count))}</span>
-            </div>
-          ))}
+      </div>
+      <div style={T.card}>
+        <div style={T.label}>📊 요일별 평균 수입</div>
+        <div style={{ display: "flex", gap: 4, alignItems: "flex-end", height: 80, marginTop: 8 }}>
+          {weekdayStats.map(function(w) {
+            const avg = w.count > 0 ? w.totalIncome / w.count : 0;
+            return (
+              <div key={w.day} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
+                <div style={{ width: "100%", background: "linear-gradient(to top,#f97316,#facc15)", borderRadius: "3px 3px 0 0", height: Math.max((avg / maxWDIncome) * 64, avg > 0 ? 4 : 0) + "px", transition: "height 0.3s" }} />
+                <div style={{ fontSize: 9, color: T.muted }}>{WEEKDAYS[w.day]}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+          {weekdayStats.filter(function(w) { return w.count > 0; }).sort(function(a, b) { return (b.totalIncome / b.count) - (a.totalIncome / a.count); }).slice(0, 3).map(function(w, i) {
+            return (
+              <div key={w.day} style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                <span>{i === 0 ? "🥇" : i === 1 ? "🥈" : "🥉"} {WEEKDAYS[w.day]}요일</span>
+                <span style={{ color: "#facc15" }}>평균 ₩{fmt(Math.round(w.totalIncome / w.count))}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
       <div style={T.card}>
         <div style={T.label}>💸 지출 카테고리별 합계</div>
-        {Object.entries(expByCat).filter(([,v])=>v>0).sort(([,a],[,b])=>b-a).map(([cat,val]) => (
-          <div key={cat} style={{ display:"flex", justifyContent:"space-between", padding:"6px 0", borderBottom:`1px solid ${T.divider}` }}>
-            <span style={{ fontSize:13 }}>{cat}</span>
-            <span style={{ fontSize:13, color:"#f87171", fontWeight:600 }}>₩{fmt(val)}</span>
-          </div>
-        ))}
-        {Object.values(expByCat).every(v=>v===0) && <div style={{ color:T.muted, fontSize:13 }}>지출 내역이 없어요</div>}
+        {Object.keys(expByCat).filter(function(c) { return expByCat[c] > 0; }).sort(function(a, b) { return expByCat[b] - expByCat[a]; }).map(function(cat) {
+          return (
+            <div key={cat} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid " + T.divider }}>
+              <span style={{ fontSize: 13 }}>{cat}</span>
+              <span style={{ fontSize: 13, color: "#f87171", fontWeight: 600 }}>₩{fmt(expByCat[cat])}</span>
+            </div>
+          );
+        })}
+        {Object.keys(expByCat).every(function(c) { return expByCat[c] === 0; }) && <div style={{ color: T.muted, fontSize: 13 }}>지출 내역이 없어요</div>}
       </div>
       <div style={T.card}>
         <div style={T.label}>📋 월별 상세</div>
-        {monthlyStats.filter(m=>m.inc>0||m.worked>0).map(m => (
-          <div key={m.month} style={{ padding:"8px 0", borderBottom:`1px solid ${T.divider}` }}>
-            <div style={{ fontWeight:600, marginBottom:4 }}>{m.month}월</div>
-            <div style={{ display:"flex", gap:12, fontSize:12, color:T.muted, flexWrap:"wrap" }}>
-              <span>⏱ {m.worked.toFixed(1)}h</span>
-              <span>💰 ₩{fmt(Math.round(m.inc))}</span>
-              <span style={{ color:"#4ade80" }}>세후 ₩{fmt(Math.round(m.taxed))}</span>
-              <span style={{ color:"#f87171" }}>지출 ₩{fmt(Math.round(m.exp))}</span>
+        {monthlyStats.filter(function(m) { return m.inc > 0 || m.worked > 0; }).map(function(m) {
+          return (
+            <div key={m.month} style={{ padding: "8px 0", borderBottom: "1px solid " + T.divider }}>
+              <div style={{ fontWeight: 600, marginBottom: 4 }}>{m.month}월</div>
+              <div style={{ display: "flex", gap: 12, fontSize: 12, color: T.muted, flexWrap: "wrap" }}>
+                <span>⏱ {m.worked.toFixed(1)}h</span>
+                <span>💰 ₩{fmt(Math.round(m.inc))}</span>
+                <span style={{ color: "#4ade80" }}>세후 ₩{fmt(Math.round(m.taxed))}</span>
+                <span style={{ color: "#f87171" }}>지출 ₩{fmt(Math.round(m.exp))}</span>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function SettingsView({ data, updateSettings, T }) {
-  const { settings } = data;
+function SettingsView(props) {
+  const data = props.data, updateSettings = props.updateSettings, T = props.T;
+  const settings = data.settings;
   const [newIncomeCat, setNewIncomeCat] = useState("");
   const [newIncomeCatColor, setNewIncomeCatColor] = useState("#818cf8");
   const [newExpenseCat, setNewExpenseCat] = useState("");
-  const [newFE, setNewFE] = useState({ name:"", amount:"", dayOfMonth:"", category:"" });
+  const [newFE, setNewFE] = useState({ name: "", amount: "", dayOfMonth: "", category: "" });
+  const [holidayInput, setHolidayInput] = useState("");
 
-  const exportData = () => {
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type:"application/json" });
+  function exportData() {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a"); a.href=url; a.download="work_tracker_backup.json"; a.click();
+    const a = document.createElement("a");
+    a.href = url; a.download = "work_tracker_backup.json"; a.click();
     URL.revokeObjectURL(url);
-  };
-  const importData = (e) => {
-    const file = e.target.files[0]; if (!file) return;
+  }
+  function importData(e) {
+    const file = e.target.files[0];
+    if (!file) return;
     const reader = new FileReader();
-    reader.onload = ev => {
+    reader.onload = function(ev) {
       try {
         const parsed = JSON.parse(ev.target.result);
-        if (parsed.days && parsed.settings) { localStorage.setItem(STORAGE_KEY, ev.target.result); window.location.reload(); }
-        else alert("올바른 백업 파일이 아니에요!");
-      } catch { alert("파일을 읽을 수 없어요!"); }
+        if (parsed.days && parsed.settings) {
+          localStorage.setItem(STORAGE_KEY, ev.target.result);
+          window.location.reload();
+        } else {
+          alert("올바른 백업 파일이 아니에요!");
+        }
+      } catch (err) {
+        alert("파일을 읽을 수 없어요!");
+      }
     };
     reader.readAsText(file);
-  };
+  }
 
-  const addFixedExpense = () => {
+  function addFixedExpense() {
     if (!newFE.name.trim() || !newFE.amount || !newFE.dayOfMonth) return;
-    const fe = { id: Date.now().toString(), name: newFE.name.trim(), amount: Number(newFE.amount), dayOfMonth: Number(newFE.dayOfMonth), category: newFE.category||"고정지출" };
-    updateSettings(s => ({ ...s, fixedExpenses: [...(s.fixedExpenses||[]), fe] }));
-    setNewFE({ name:"", amount:"", dayOfMonth:"", category:"" });
-  };
+    const fe = { id: Date.now().toString(), name: newFE.name.trim(), amount: Number(newFE.amount), dayOfMonth: Number(newFE.dayOfMonth), category: newFE.category || "고정지출" };
+    updateSettings(function(s) { return Object.assign({}, s, { fixedExpenses: (s.fixedExpenses || []).concat([fe]) }); });
+    setNewFE({ name: "", amount: "", dayOfMonth: "", category: "" });
+  }
 
   return (
-    <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={T.card}>
         <div style={T.label}>⚙️ 기본 설정</div>
-        <div style={{ marginBottom:12 }}>
+        <div style={{ marginBottom: 12 }}>
           <div style={T.subLabel}>일일 목표 근무시간 (h)</div>
-          <input type="number" value={settings.dailyGoalHours} onChange={e => updateSettings(s=>({...s,dailyGoalHours:Number(e.target.value)}))} style={{ ...T.input, width:80 }} min={0} max={24} step={0.5} />
+          <input type="number" value={settings.dailyGoalHours} onChange={function(e) { updateSettings(function(s) { return Object.assign({}, s, { dailyGoalHours: Number(e.target.value) }); }); }} style={Object.assign({}, T.input, { width: 80 })} min={0} max={24} step={0.5} />
         </div>
-        <div style={{ marginBottom:12 }}>
+        <div style={{ marginBottom: 12 }}>
           <div style={T.subLabel}>월 목표 수입 (₩)</div>
-          <input type="number" value={settings.monthlyGoalIncome||""} placeholder="0" onChange={e => updateSettings(s=>({...s,monthlyGoalIncome:Number(e.target.value)}))} style={{ ...T.input, width:140 }} />
+          <input type="number" value={settings.monthlyGoalIncome || ""} placeholder="0" onChange={function(e) { updateSettings(function(s) { return Object.assign({}, s, { monthlyGoalIncome: Number(e.target.value) }); }); }} style={Object.assign({}, T.input, { width: 140 })} />
         </div>
         <div>
           <div style={T.subLabel}>세금 비율 (%)</div>
-          <input type="number" value={settings.taxRate} onChange={e => updateSettings(s=>({...s,taxRate:Number(e.target.value)}))} style={{ ...T.input, width:80 }} min={0} max={50} step={0.1} />
+          <input type="number" value={settings.taxRate} onChange={function(e) { updateSettings(function(s) { return Object.assign({}, s, { taxRate: Number(e.target.value) }); }); }} style={Object.assign({}, T.input, { width: 80 })} min={0} max={50} step={0.1} />
         </div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>⏱ 타이머 방식</div>
-        <div style={{ display:"flex", gap:8 }}>
-          {[{id:"up",label:"⬆️ 카운트업",desc:"0부터 올라가요"},{id:"down",label:"⬇️ 카운트다운",desc:"목표시간부터 내려가요"}].map(opt => (
-            <button key={opt.id} onClick={() => updateSettings(s=>({...s,timerMode:opt.id}))} style={{ flex:1, padding:"10px 8px", borderRadius:10, border:"none", cursor:"pointer", fontSize:12, fontWeight:600, background:settings.timerMode===opt.id?"rgba(129,140,248,0.2)":"rgba(255,255,255,0.04)", color:settings.timerMode===opt.id?"#818cf8":T.muted, outline:settings.timerMode===opt.id?"1px solid rgba(129,140,248,0.4)":`1px solid ${T.divider}` }}>
-              <div>{opt.label}</div>
-              <div style={{ fontSize:10, marginTop:2, fontWeight:400 }}>{opt.desc}</div>
-            </button>
-          ))}
+        <div style={{ display: "flex", gap: 8 }}>
+          {[{ id: "up", label: "⬆️ 카운트업", desc: "0부터 올라가요" }, { id: "down", label: "⬇️ 카운트다운", desc: "목표시간부터 내려가요" }].map(function(opt) {
+            return (
+              <button key={opt.id} onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { timerMode: opt.id }); }); }} style={{ flex: 1, padding: "10px 8px", borderRadius: 10, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 600, background: settings.timerMode === opt.id ? "rgba(129,140,248,0.2)" : "rgba(255,255,255,0.04)", color: settings.timerMode === opt.id ? "#818cf8" : T.muted, outline: settings.timerMode === opt.id ? "1px solid rgba(129,140,248,0.4)" : ("1px solid " + T.divider) }}>
+                <div>{opt.label}</div>
+                <div style={{ fontSize: 10, marginTop: 2, fontWeight: 400 }}>{opt.desc}</div>
+              </button>
+            );
+          })}
         </div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>🛌 고정 휴일 요일</div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          {WEEKDAYS.map((d,i) => (
-            <button key={i} onClick={() => updateSettings(s => ({ ...s, fixedOffDays:s.fixedOffDays.includes(i)?s.fixedOffDays.filter(x=>x!==i):[...s.fixedOffDays,i] }))} style={{ padding:"6px 12px", borderRadius:8, border:"none", cursor:"pointer", fontSize:13, background:settings.fixedOffDays.includes(i)?"rgba(248,113,113,0.15)":"rgba(255,255,255,0.03)", color:settings.fixedOffDays.includes(i)?"#f87171":T.muted, outline:settings.fixedOffDays.includes(i)?"1px solid rgba(248,113,113,0.4)":`1px solid ${T.divider}` }}>{d}</button>
-          ))}
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          {WEEKDAYS.map(function(d, i) {
+            const active = settings.fixedOffDays.indexOf(i) !== -1;
+            return (
+              <button key={i} onClick={function() { updateSettings(function(s) { const has = s.fixedOffDays.indexOf(i) !== -1; const next = has ? s.fixedOffDays.filter(function(x) { return x !== i; }) : s.fixedOffDays.concat([i]); return Object.assign({}, s, { fixedOffDays: next }); }); }} style={{ padding: "6px 12px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 13, background: active ? "rgba(248,113,113,0.15)" : "rgba(255,255,255,0.03)", color: active ? "#f87171" : T.muted, outline: active ? "1px solid rgba(248,113,113,0.4)" : ("1px solid " + T.divider) }}>{d}</button>
+            );
+          })}
         </div>
-        <div style={{ fontSize:11, color:T.muted, marginTop:8 }}>고정 휴일도 시간 입력하면 근무로 인정돼요</div>
+        <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>고정 휴일도 시간 입력하면 근무로 인정돼요</div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>📌 고정 지출 관리</div>
-        <div style={{ fontSize:11, color:T.muted, marginBottom:10 }}>매달 납부일이 되면 입력 탭에 알림이 떠요</div>
-        {(settings.fixedExpenses||[]).map(fe => (
-          <div key={fe.id} style={{ display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 12px", background:"rgba(249,115,22,0.06)", borderRadius:10, border:"1px solid rgba(249,115,22,0.2)", marginBottom:8 }}>
-            <div>
-              <div style={{ fontSize:13, fontWeight:600 }}>{fe.name}</div>
-              <div style={{ fontSize:11, color:T.muted, marginTop:2 }}>매달 {fe.dayOfMonth}일 · {fe.category} · ₩{fmt(fe.amount)}</div>
+        <div style={{ fontSize: 11, color: T.muted, marginBottom: 10 }}>매달 납부일이 되면 입력 탭에 알림이 떠요</div>
+        {(settings.fixedExpenses || []).map(function(fe) {
+          return (
+            <div key={fe.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 12px", background: "rgba(249,115,22,0.06)", borderRadius: 10, border: "1px solid rgba(249,115,22,0.2)", marginBottom: 8 }}>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{fe.name}</div>
+                <div style={{ fontSize: 11, color: T.muted, marginTop: 2 }}>매달 {fe.dayOfMonth}일 · {fe.category} · ₩{fmt(fe.amount)}</div>
+              </div>
+              <button onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { fixedExpenses: (s.fixedExpenses || []).filter(function(x) { return x.id !== fe.id; }) }); }); }} style={T.delBtn}>✕</button>
             </div>
-            <button onClick={() => updateSettings(s => ({ ...s, fixedExpenses:(s.fixedExpenses||[]).filter(x=>x.id!==fe.id) }))} style={T.delBtn}>✕</button>
+          );
+        })}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input placeholder="이름 (예: 월세)" value={newFE.name} onChange={function(e) { setNewFE(Object.assign({}, newFE, { name: e.target.value })); }} style={Object.assign({}, T.input, { flex: 2 })} />
+            <input type="number" placeholder="금액" value={newFE.amount} onChange={function(e) { setNewFE(Object.assign({}, newFE, { amount: e.target.value })); }} style={Object.assign({}, T.input, { flex: 1 })} />
           </div>
-        ))}
-        <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
-          <div style={{ display:"flex", gap:8 }}>
-            <input placeholder="이름 (예: 월세)" value={newFE.name} onChange={e=>setNewFE(p=>({...p,name:e.target.value}))} style={{ ...T.input, flex:2 }} />
-            <input type="number" placeholder="금액" value={newFE.amount} onChange={e=>setNewFE(p=>({...p,amount:e.target.value}))} style={{ ...T.input, flex:1 }} />
-          </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <div style={{ flex:1 }}>
+          <div style={{ display: "flex", gap: 8 }}>
+            <div style={{ flex: 1 }}>
               <div style={T.subLabel}>매달 납부일</div>
-              <input type="number" placeholder="15" min={1} max={31} value={newFE.dayOfMonth} onChange={e=>setNewFE(p=>({...p,dayOfMonth:e.target.value}))} style={{ ...T.input }} />
+              <input type="number" placeholder="15" min={1} max={31} value={newFE.dayOfMonth} onChange={function(e) { setNewFE(Object.assign({}, newFE, { dayOfMonth: e.target.value })); }} style={T.input} />
             </div>
-            <div style={{ flex:1 }}>
+            <div style={{ flex: 1 }}>
               <div style={T.subLabel}>카테고리</div>
-              <select value={newFE.category} onChange={e=>setNewFE(p=>({...p,category:e.target.value}))} style={{ ...T.input }}>
+              <select value={newFE.category} onChange={function(e) { setNewFE(Object.assign({}, newFE, { category: e.target.value })); }} style={T.input}>
                 <option value="">고정지출</option>
-                {settings.expenseCategories.map(c => <option key={c} value={c}>{c}</option>)}
+                {settings.expenseCategories.map(function(c) { return <option key={c} value={c}>{c}</option>; })}
               </select>
             </div>
           </div>
-          <button onClick={addFixedExpense} style={{ ...T.addBtn, width:"100%" }}>+ 고정 지출 추가</button>
+          <button onClick={addFixedExpense} style={Object.assign({}, T.addBtn, { width: "100%" })}>+ 고정 지출 추가</button>
         </div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>💰 수입 카테고리</div>
-        <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:10 }}>
-          {settings.incomeCategories.map((c,i) => {
-            const name=c.name||c; const color=c.color||"#818cf8";
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 10 }}>
+          {settings.incomeCategories.map(function(c, i) {
+            const name = c.name || c, color = c.color || "#818cf8";
             return (
-              <div key={name} style={{ background:"rgba(255,255,255,0.02)", borderRadius:10, padding:"10px 12px", border:"1px solid rgba(255,255,255,0.06)" }}>
-                <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
-                  <div style={{ width:12, height:12, borderRadius:"50%", background:color, flexShrink:0 }} />
-                  <span style={{ flex:1, fontSize:13, fontWeight:600 }}>{name}</span>
-                  <input type="color" value={color} onChange={e => updateSettings(s=>({ ...s, incomeCategories:s.incomeCategories.map((x,j)=>j===i?{...x,color:e.target.value}:x) }))} style={{ width:28, height:26, border:"none", background:"none", cursor:"pointer", padding:0 }} />
-                  <button onClick={() => updateSettings(s=>({...s,incomeCategories:s.incomeCategories.filter((_,j)=>j!==i)}))} style={T.chipDel}>✕</button>
+              <div key={name} style={{ background: "rgba(255,255,255,0.02)", borderRadius: 10, padding: "10px 12px", border: "1px solid rgba(255,255,255,0.06)" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                  <div style={{ width: 12, height: 12, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                  <span style={{ flex: 1, fontSize: 13, fontWeight: 600 }}>{name}</span>
+                  <input type="color" value={color} onChange={function(e) { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.map(function(x, j) { return j === i ? Object.assign({}, x, { color: e.target.value }) : x; }) }); }); }} style={{ width: 28, height: 26, border: "none", background: "none", cursor: "pointer", padding: 0 }} />
+                  <button onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.filter(function(_, j) { return j !== i; }) }); }); }} style={T.chipDel}>✕</button>
                 </div>
-                <div style={{ fontSize:11, color:T.muted, marginBottom:4 }}>정산 방식</div>
-                <div style={{ display:"flex", gap:4, flexWrap:"wrap" }}>
-                  {[{id:"coupang",label:"쿠팡(수~화/금)"},{id:"weekday",label:"고정 요일"},{id:"businessDays",label:"영업일 N일"},{id:"manual",label:"직접 지정"},{id:"none",label:"없음"}].map(opt => (
-                    <button key={opt.id} onClick={() => updateSettings(s=>({ ...s, incomeCategories:s.incomeCategories.map((x,j)=>j===i?{...x,settlementType:opt.id}:x) }))} style={{ padding:"4px 8px", borderRadius:6, border:"none", cursor:"pointer", fontSize:11, background:(c.settlementType||"none")===opt.id?"rgba(129,140,248,0.25)":"rgba(255,255,255,0.05)", color:(c.settlementType||"none")===opt.id?"#818cf8":T.muted, outline:(c.settlementType||"none")===opt.id?"1px solid rgba(129,140,248,0.4)":"none" }}>{opt.label}</button>
-                  ))}
+                <div style={{ fontSize: 11, color: T.muted, marginBottom: 4 }}>정산 방식</div>
+                <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                  {[{ id: "coupang", label: "쿠팡(수~화/금)" }, { id: "weekday", label: "고정 요일" }, { id: "businessDays", label: "영업일 N일" }, { id: "manual", label: "직접 지정" }, { id: "none", label: "없음" }].map(function(opt) {
+                    const active = (c.settlementType || "none") === opt.id;
+                    return (
+                      <button key={opt.id} onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.map(function(x, j) { return j === i ? Object.assign({}, x, { settlementType: opt.id }) : x; }) }); }); }} style={{ padding: "4px 8px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 11, background: active ? "rgba(129,140,248,0.25)" : "rgba(255,255,255,0.05)", color: active ? "#818cf8" : T.muted, outline: active ? "1px solid rgba(129,140,248,0.4)" : "none" }}>{opt.label}</button>
+                    );
+                  })}
                 </div>
-                {c.settlementType==="weekday" && (
-                  <div style={{ marginTop:8, display:"flex", gap:4, flexWrap:"wrap" }}>
-                    {WEEKDAYS.map((wd,wi) => (
-                      <button key={wi} onClick={() => updateSettings(s=>({ ...s, incomeCategories:s.incomeCategories.map((x,j)=>j===i?{...x,settlementDow:wi}:x) }))} style={{ padding:"4px 8px", borderRadius:6, border:"none", cursor:"pointer", fontSize:11, background:(c.settlementDow??5)===wi?"rgba(250,204,21,0.2)":"rgba(255,255,255,0.04)", color:(c.settlementDow??5)===wi?"#facc15":T.muted, outline:(c.settlementDow??5)===wi?"1px solid rgba(250,204,21,0.4)":"none" }}>{wd}</button>
-                    ))}
+                {c.settlementType === "weekday" && (
+                  <div style={{ marginTop: 8, display: "flex", gap: 4, flexWrap: "wrap" }}>
+                    {WEEKDAYS.map(function(wd, wi) {
+                      const active = (c.settlementDow == null ? 5 : c.settlementDow) === wi;
+                      return (
+                        <button key={wi} onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.map(function(x, j) { return j === i ? Object.assign({}, x, { settlementDow: wi }) : x; }) }); }); }} style={{ padding: "4px 8px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 11, background: active ? "rgba(250,204,21,0.2)" : "rgba(255,255,255,0.04)", color: active ? "#facc15" : T.muted, outline: active ? "1px solid rgba(250,204,21,0.4)" : "none" }}>{wd}</button>
+                      );
+                    })}
                   </div>
                 )}
-                {c.settlementType==="businessDays" && (
-                  <div style={{ marginTop:8, display:"flex", alignItems:"center", gap:6 }}>
-                    <span style={{ fontSize:11, color:T.muted }}>영업일</span>
-                    <input type="number" value={c.settlementDays??3} min={1} max={30} onChange={e => updateSettings(s=>({ ...s, incomeCategories:s.incomeCategories.map((x,j)=>j===i?{...x,settlementDays:Number(e.target.value)}:x) }))} style={{ ...T.input, width:56 }} />
-                    <span style={{ fontSize:11, color:T.muted }}>일 후</span>
+                {c.settlementType === "businessDays" && (
+                  <div style={{ marginTop: 8, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 11, color: T.muted }}>영업일</span>
+                    <input type="number" value={c.settlementDays == null ? 3 : c.settlementDays} min={1} max={30} onChange={function(e) { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.map(function(x, j) { return j === i ? Object.assign({}, x, { settlementDays: Number(e.target.value) }) : x; }) }); }); }} style={Object.assign({}, T.input, { width: 56 })} />
+                    <span style={{ fontSize: 11, color: T.muted }}>일 후</span>
                   </div>
                 )}
               </div>
             );
           })}
         </div>
-        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
-          <input type="color" value={newIncomeCatColor} onChange={e=>setNewIncomeCatColor(e.target.value)} style={{ width:36, height:36, border:"none", background:"none", cursor:"pointer", padding:0, flexShrink:0 }} />
-          <input placeholder="카테고리 이름" value={newIncomeCat} onChange={e=>setNewIncomeCat(e.target.value)} style={{ ...T.input, flex:1 }} onKeyDown={e=>{ if(e.key==="Enter"&&newIncomeCat.trim()){updateSettings(s=>({...s,incomeCategories:[...s.incomeCategories,{name:newIncomeCat.trim(),color:newIncomeCatColor}]}));setNewIncomeCat("");} }} />
-          <button onClick={() => { if(newIncomeCat.trim()){updateSettings(s=>({...s,incomeCategories:[...s.incomeCategories,{name:newIncomeCat.trim(),color:newIncomeCatColor}]}));setNewIncomeCat("");} }} style={T.addBtn}>추가</button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="color" value={newIncomeCatColor} onChange={function(e) { setNewIncomeCatColor(e.target.value); }} style={{ width: 36, height: 36, border: "none", background: "none", cursor: "pointer", padding: 0, flexShrink: 0 }} />
+          <input placeholder="카테고리 이름" value={newIncomeCat} onChange={function(e) { setNewIncomeCat(e.target.value); }} style={Object.assign({}, T.input, { flex: 1 })} onKeyDown={function(e) { if (e.key === "Enter" && newIncomeCat.trim()) { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.concat([{ name: newIncomeCat.trim(), color: newIncomeCatColor }]) }); }); setNewIncomeCat(""); } }} />
+          <button onClick={function() { if (newIncomeCat.trim()) { updateSettings(function(s) { return Object.assign({}, s, { incomeCategories: s.incomeCategories.concat([{ name: newIncomeCat.trim(), color: newIncomeCatColor }]) }); }); setNewIncomeCat(""); } }} style={T.addBtn}>추가</button>
         </div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>💸 지출 카테고리</div>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
-          {settings.expenseCategories.map(c => (
-            <div key={c} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", background:"rgba(129,140,248,0.1)", borderRadius:20, fontSize:12, color:"#c7d2fe", border:"1px solid rgba(129,140,248,0.2)" }}>
-              {c}
-              <button onClick={() => updateSettings(s=>({...s,expenseCategories:s.expenseCategories.filter(x=>x!==c)}))} style={T.chipDel}>✕</button>
-            </div>
-          ))}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {settings.expenseCategories.map(function(c) {
+            return (
+              <div key={c} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "rgba(129,140,248,0.1)", borderRadius: 20, fontSize: 12, color: "#c7d2fe", border: "1px solid rgba(129,140,248,0.2)" }}>
+                {c}
+                <button onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { expenseCategories: s.expenseCategories.filter(function(x) { return x !== c; }) }); }); }} style={T.chipDel}>✕</button>
+              </div>
+            );
+          })}
         </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <input placeholder="카테고리 추가" value={newExpenseCat} onChange={e=>setNewExpenseCat(e.target.value)} style={{ ...T.input, flex:1 }} onKeyDown={e=>{ if(e.key==="Enter"&&newExpenseCat.trim()){updateSettings(s=>({...s,expenseCategories:[...s.expenseCategories,newExpenseCat.trim()]}));setNewExpenseCat("");} }} />
-          <button onClick={()=>{if(newExpenseCat.trim()){updateSettings(s=>({...s,expenseCategories:[...s.expenseCategories,newExpenseCat.trim()]}));setNewExpenseCat("");}}} style={T.addBtn}>추가</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <input placeholder="카테고리 추가" value={newExpenseCat} onChange={function(e) { setNewExpenseCat(e.target.value); }} style={Object.assign({}, T.input, { flex: 1 })} onKeyDown={function(e) { if (e.key === "Enter" && newExpenseCat.trim()) { updateSettings(function(s) { return Object.assign({}, s, { expenseCategories: s.expenseCategories.concat([newExpenseCat.trim()]) }); }); setNewExpenseCat(""); } }} />
+          <button onClick={function() { if (newExpenseCat.trim()) { updateSettings(function(s) { return Object.assign({}, s, { expenseCategories: s.expenseCategories.concat([newExpenseCat.trim()]) }); }); setNewExpenseCat(""); } }} style={T.addBtn}>추가</button>
         </div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>🎌 공휴일 등록</div>
-        <div style={{ fontSize:11, color:T.muted, marginBottom:10 }}>등록한 공휴일은 영업일 계산에서 자동으로 제외돼요</div>
-        <div style={{ display:"flex", flexWrap:"wrap", gap:6, marginBottom:10 }}>
-          {(settings.holidays||[]).sort().map(h => {
-            const parts=h.split("-").map(Number);
-            const d=new Date(parts[0],parts[1]-1,parts[2]);
+        <div style={{ fontSize: 11, color: T.muted, marginBottom: 10 }}>등록한 공휴일은 영업일 계산에서 자동으로 제외돼요</div>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 10 }}>
+          {(settings.holidays || []).slice().sort().map(function(h) {
+            const parts = h.split("-").map(Number);
+            const d = new Date(parts[0], parts[1] - 1, parts[2]);
             return (
-              <div key={h} style={{ display:"flex", alignItems:"center", gap:4, padding:"4px 10px", background:"rgba(248,113,113,0.1)", borderRadius:20, fontSize:12, color:"#f87171", border:"1px solid rgba(248,113,113,0.2)" }}>
-                {h.slice(5).replace("-","/")} ({WEEKDAYS[d.getDay()]})
-                <button onClick={() => updateSettings(s=>({ ...s, holidays:(s.holidays||[]).filter(x=>x!==h) }))} style={{ background:"none", border:"none", color:"#f87171", cursor:"pointer", fontSize:11, padding:0 }}>✕</button>
+              <div key={h} style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 10px", background: "rgba(248,113,113,0.1)", borderRadius: 20, fontSize: 12, color: "#f87171", border: "1px solid rgba(248,113,113,0.2)" }}>
+                {h.slice(5).replace("-", "/")} ({WEEKDAYS[d.getDay()]})
+                <button onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { holidays: (s.holidays || []).filter(function(x) { return x !== h; }) }); }); }} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 11, padding: 0 }}>✕</button>
               </div>
             );
           })}
-          {!(settings.holidays||[]).length && <div style={{ fontSize:12, color:T.muted }}>등록된 공휴일이 없어요</div>}
+          {!(settings.holidays || []).length && <div style={{ fontSize: 12, color: T.muted }}>등록된 공휴일이 없어요</div>}
         </div>
-        <div style={{ display:"flex", gap:8 }}>
-          <input type="date" id="holidayInput" style={{ ...T.input, flex:1 }} />
-          <button onClick={() => {
-            const val=document.getElementById("holidayInput").value;
-            if (val&&!(settings.holidays||[]).includes(val)) { updateSettings(s=>({ ...s, holidays:[...(s.holidays||[]),val].sort() })); document.getElementById("holidayInput").value=""; }
+        <div style={{ display: "flex", gap: 8 }}>
+          <input type="date" value={holidayInput} onChange={function(e) { setHolidayInput(e.target.value); }} style={Object.assign({}, T.input, { flex: 1 })} />
+          <button onClick={function() {
+            if (holidayInput && (settings.holidays || []).indexOf(holidayInput) === -1) {
+              updateSettings(function(s) { return Object.assign({}, s, { holidays: (s.holidays || []).concat([holidayInput]).sort() }); });
+              setHolidayInput("");
+            }
           }} style={T.addBtn}>추가</button>
         </div>
       </div>
 
       <div style={T.card}>
         <div style={T.label}>💾 데이터 백업 / 복원</div>
-        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
-          <button onClick={exportData} style={{ ...T.addBtn, background:"rgba(74,222,128,0.1)", borderColor:"rgba(74,222,128,0.3)", color:"#4ade80" }}>📤 백업 파일 다운로드</button>
-          <label style={{ ...T.addBtn, cursor:"pointer", background:"rgba(250,204,21,0.1)", borderColor:"rgba(250,204,21,0.3)", color:"#facc15" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button onClick={exportData} style={Object.assign({}, T.addBtn, { background: "rgba(74,222,128,0.1)", borderColor: "rgba(74,222,128,0.3)", color: "#4ade80" })}>📤 백업 파일 다운로드</button>
+          <label style={Object.assign({}, T.addBtn, { cursor: "pointer", background: "rgba(250,204,21,0.1)", borderColor: "rgba(250,204,21,0.3)", color: "#facc15" })}>
             📥 백업 파일 불러오기
-            <input type="file" accept=".json" style={{ display:"none" }} onChange={importData} />
+            <input type="file" accept=".json" style={{ display: "none" }} onChange={importData} />
           </label>
         </div>
-        <div style={{ fontSize:11, color:T.muted, marginTop:8 }}>데이터를 JSON 파일로 저장하거나 복원할 수 있어요</div>
+        <div style={{ fontSize: 11, color: T.muted, marginTop: 8 }}>데이터를 JSON 파일로 저장하거나 복원할 수 있어요</div>
       </div>
     </div>
   );
 }
 
 const base = {
-  card: { borderRadius:12, padding:"14px", border:"1px solid rgba(255,255,255,0.06)" },
-  summaryCard: { borderRadius:12, padding:"14px", border:"1px solid rgba(129,140,248,0.2)" },
-  summaryTitle: { fontSize:13, fontWeight:700, color:"#818cf8", marginBottom:12 },
-  label: { fontSize:13, fontWeight:700, color:"#94a3b8", marginBottom:10, display:"block" },
-  subLabel: { fontSize:11, color:"#64748b", marginBottom:4 },
-  resultBox: { marginTop:10, padding:"8px 12px", background:"rgba(255,255,255,0.04)", borderRadius:8, fontSize:13, display:"flex", flexWrap:"wrap", gap:8 },
-  motivationBox: { marginTop:8, padding:"8px 12px", background:"rgba(129,140,248,0.1)", borderRadius:8, fontSize:13, color:"#c7d2fe", textAlign:"center" },
-  addBtn: { padding:"8px 14px", background:"rgba(129,140,248,0.15)", border:"1px solid rgba(129,140,248,0.3)", borderRadius:8, color:"#818cf8", fontSize:13, cursor:"pointer", fontWeight:600 },
-  delBtn: { background:"rgba(248,113,113,0.15)", border:"none", borderRadius:6, color:"#f87171", padding:"6px 8px", cursor:"pointer", fontSize:12, flexShrink:0 },
-  offBadge: { marginTop:8, padding:"6px 10px", background:"rgba(248,113,113,0.1)", borderRadius:8, fontSize:12, color:"#f87171" },
-  navBtn: { background:"rgba(255,255,255,0.06)", border:"none", borderRadius:8, color:"#e2e8f0", padding:"6px 14px", cursor:"pointer", fontSize:18 },
-  clockInBtn: { padding:"8px 16px", background:"linear-gradient(135deg,#4ade80,#22c55e)", border:"none", borderRadius:20, color:"#0f172a", fontWeight:700, fontSize:13, cursor:"pointer" },
-  clockOutBtn: { padding:"8px 16px", background:"linear-gradient(135deg,#f87171,#ef4444)", border:"none", borderRadius:20, color:"#fff", fontWeight:700, fontSize:13, cursor:"pointer" },
-  chipDel: { background:"none", border:"none", color:"#818cf8", cursor:"pointer", fontSize:11, padding:0 },
-  tabBtn: { flex:1, padding:"12px 4px", background:"none", border:"none", fontSize:12, cursor:"pointer", fontWeight:500, transition:"all 0.2s" },
+  card: { borderRadius: 12, padding: "14px", border: "1px solid rgba(255,255,255,0.06)" },
+  summaryCard: { borderRadius: 12, padding: "14px", border: "1px solid rgba(129,140,248,0.2)" },
+  summaryTitle: { fontSize: 13, fontWeight: 700, color: "#818cf8", marginBottom: 12 },
+  label: { fontSize: 13, fontWeight: 700, color: "#94a3b8", marginBottom: 10, display: "block" },
+  subLabel: { fontSize: 11, color: "#64748b", marginBottom: 4 },
+  resultBox: { marginTop: 10, padding: "8px 12px", background: "rgba(255,255,255,0.04)", borderRadius: 8, fontSize: 13, display: "flex", flexWrap: "wrap", gap: 8 },
+  motivationBox: { marginTop: 8, padding: "8px 12px", background: "rgba(129,140,248,0.1)", borderRadius: 8, fontSize: 13, color: "#c7d2fe", textAlign: "center" },
+  addBtn: { padding: "8px 14px", background: "rgba(129,140,248,0.15)", border: "1px solid rgba(129,140,248,0.3)", borderRadius: 8, color: "#818cf8", fontSize: 13, cursor: "pointer", fontWeight: 600 },
+  delBtn: { background: "rgba(248,113,113,0.15)", border: "none", borderRadius: 6, color: "#f87171", padding: "6px 8px", cursor: "pointer", fontSize: 12, flexShrink: 0 },
+  offBadge: { marginTop: 8, padding: "6px 10px", background: "rgba(248,113,113,0.1)", borderRadius: 8, fontSize: 12, color: "#f87171" },
+  navBtn: { background: "rgba(255,255,255,0.06)", border: "none", borderRadius: 8, color: "#e2e8f0", padding: "6px 14px", cursor: "pointer", fontSize: 18 },
+  clockInBtn: { padding: "8px 16px", background: "linear-gradient(135deg,#4ade80,#22c55e)", border: "none", borderRadius: 20, color: "#0f172a", fontWeight: 700, fontSize: 13, cursor: "pointer" },
+  clockOutBtn: { padding: "8px 16px", background: "linear-gradient(135deg,#f87171,#ef4444)", border: "none", borderRadius: 20, color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" },
+  chipDel: { background: "none", border: "none", color: "#818cf8", cursor: "pointer", fontSize: 11, padding: 0 },
+  tabBtn: { flex: 1, padding: "12px 4px", background: "none", border: "none", fontSize: 12, cursor: "pointer", fontWeight: 500, transition: "all 0.2s" }
 };
 
-const darkTheme = {
-  ...base,
-  root: { background:"#0f172a", color:"#e2e8f0" },
-  header: { background:"linear-gradient(135deg,#1e293b,#0f172a)", padding:"16px 16px 12px", borderBottom:"1px solid rgba(255,255,255,0.07)", display:"flex", justifyContent:"space-between", alignItems:"center" },
-  headerTitle: { fontSize:20, fontWeight:800, color:"#f1f5f9", letterSpacing:"-0.5px" },
-  headerDate: { fontSize:12, color:"#64748b", marginTop:2 },
-  timerBar: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 16px", background:"#1e293b", borderBottom:"1px solid rgba(255,255,255,0.07)" },
-  tabBar: { display:"flex", background:"#1e293b", borderBottom:"1px solid rgba(255,255,255,0.07)", position:"sticky", top:0, zIndex:10 },
-  tabBtnActive: { color:"#818cf8", borderBottom:"2px solid #818cf8", background:"rgba(129,140,248,0.05)" },
-  tabBtn: { ...base.tabBtn, color:"#64748b" },
-  card: { ...base.card, background:"#1e293b" },
-  summaryCard: { ...base.summaryCard, background:"linear-gradient(135deg,#1e293b,#0f172a)" },
-  input: { background:"#0f172a", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#e2e8f0", padding:"8px 10px", fontSize:13, width:"100%", boxSizing:"border-box", outline:"none" },
-  textarea: { background:"#0f172a", border:"1px solid rgba(255,255,255,0.1)", borderRadius:8, color:"#e2e8f0", padding:"10px", fontSize:13, width:"100%", boxSizing:"border-box", outline:"none", resize:"vertical", fontFamily:"inherit" },
+const darkTheme = Object.assign({}, base, {
+  root: { background: "#0f172a", color: "#e2e8f0" },
+  header: { background: "linear-gradient(135deg,#1e293b,#0f172a)", padding: "16px 16px 12px", borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", justifyContent: "space-between", alignItems: "center" },
+  headerTitle: { fontSize: 20, fontWeight: 800, color: "#f1f5f9", letterSpacing: "-0.5px" },
+  headerDate: { fontSize: 12, color: "#64748b", marginTop: 2 },
+  timerBar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#1e293b", borderBottom: "1px solid rgba(255,255,255,0.07)" },
+  tabBar: { display: "flex", background: "#1e293b", borderBottom: "1px solid rgba(255,255,255,0.07)", position: "sticky", top: 0, zIndex: 10 },
+  tabBtnActive: { color: "#818cf8", borderBottom: "2px solid #818cf8", background: "rgba(129,140,248,0.05)" },
+  tabBtn: Object.assign({}, base.tabBtn, { color: "#64748b" }),
+  card: Object.assign({}, base.card, { background: "#1e293b" }),
+  summaryCard: Object.assign({}, base.summaryCard, { background: "linear-gradient(135deg,#1e293b,#0f172a)" }),
+  input: { background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#e2e8f0", padding: "8px 10px", fontSize: 13, width: "100%", boxSizing: "border-box", outline: "none" },
+  textarea: { background: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, color: "#e2e8f0", padding: "10px", fontSize: 13, width: "100%", boxSizing: "border-box", outline: "none", resize: "vertical", fontFamily: "inherit" },
   muted: "#64748b",
   divider: "rgba(255,255,255,0.05)",
   calCellBg: "rgba(255,255,255,0.03)",
-  navBtn: { ...base.navBtn, color:"#e2e8f0" },
-};
+  navBtn: Object.assign({}, base.navBtn, { color: "#e2e8f0" })
+});
 
-const lightTheme = {
-  ...base,
-  root: { background:"#f8fafc", color:"#1e293b" },
-  header: { background:"linear-gradient(135deg,#fff,#f1f5f9)", padding:"16px 16px 12px", borderBottom:"1px solid rgba(0,0,0,0.08)", display:"flex", justifyContent:"space-between", alignItems:"center" },
-  headerTitle: { fontSize:20, fontWeight:800, color:"#1e293b", letterSpacing:"-0.5px" },
-  headerDate: { fontSize:12, color:"#94a3b8", marginTop:2 },
-  timerBar: { display:"flex", justifyContent:"space-between", alignItems:"center", padding:"10px 16px", background:"#fff", borderBottom:"1px solid rgba(0,0,0,0.08)" },
-  tabBar: { display:"flex", background:"#fff", borderBottom:"1px solid rgba(0,0,0,0.08)", position:"sticky", top:0, zIndex:10 },
-  tabBtnActive: { color:"#6366f1", borderBottom:"2px solid #6366f1", background:"rgba(99,102,241,0.04)" },
-  tabBtn: { ...base.tabBtn, color:"#94a3b8" },
-  card: { ...base.card, background:"#fff", border:"1px solid rgba(0,0,0,0.07)" },
-  summaryCard: { borderRadius:12, padding:"14px", border:"1px solid rgba(99,102,241,0.2)", background:"linear-gradient(135deg,#fff,#f8fafc)" },
-  summaryTitle: { fontSize:13, fontWeight:700, color:"#6366f1", marginBottom:12 },
-  input: { background:"#f8fafc", border:"1px solid rgba(0,0,0,0.12)", borderRadius:8, color:"#1e293b", padding:"8px 10px", fontSize:13, width:"100%", boxSizing:"border-box", outline:"none" },
-  textarea: { background:"#f8fafc", border:"1px solid rgba(0,0,0,0.12)", borderRadius:8, color:"#1e293b", padding:"10px", fontSize:13, width:"100%", boxSizing:"border-box", outline:"none", resize:"vertical", fontFamily:"inherit" },
+const lightTheme = Object.assign({}, base, {
+  root: { background: "#f8fafc", color: "#1e293b" },
+  header: { background: "linear-gradient(135deg,#fff,#f1f5f9)", padding: "16px 16px 12px", borderBottom: "1px solid rgba(0,0,0,0.08)", display: "flex", justifyContent: "space-between", alignItems: "center" },
+  headerTitle: { fontSize: 20, fontWeight: 800, color: "#1e293b", letterSpacing: "-0.5px" },
+  headerDate: { fontSize: 12, color: "#94a3b8", marginTop: 2 },
+  timerBar: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "10px 16px", background: "#fff", borderBottom: "1px solid rgba(0,0,0,0.08)" },
+  tabBar: { display: "flex", background: "#fff", borderBottom: "1px solid rgba(0,0,0,0.08)", position: "sticky", top: 0, zIndex: 10 },
+  tabBtnActive: { color: "#6366f1", borderBottom: "2px solid #6366f1", background: "rgba(99,102,241,0.04)" },
+  tabBtn: Object.assign({}, base.tabBtn, { color: "#94a3b8" }),
+  card: Object.assign({}, base.card, { background: "#fff", border: "1px solid rgba(0,0,0,0.07)" }),
+  summaryCard: { borderRadius: 12, padding: "14px", border: "1px solid rgba(99,102,241,0.2)", background: "linear-gradient(135deg,#fff,#f8fafc)" },
+  summaryTitle: { fontSize: 13, fontWeight: 700, color: "#6366f1", marginBottom: 12 },
+  input: { background: "#f8fafc", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, color: "#1e293b", padding: "8px 10px", fontSize: 13, width: "100%", boxSizing: "border-box", outline: "none" },
+  textarea: { background: "#f8fafc", border: "1px solid rgba(0,0,0,0.12)", borderRadius: 8, color: "#1e293b", padding: "10px", fontSize: 13, width: "100%", boxSizing: "border-box", outline: "none", resize: "vertical", fontFamily: "inherit" },
   muted: "#94a3b8",
   divider: "rgba(0,0,0,0.06)",
   calCellBg: "rgba(0,0,0,0.02)",
-  navBtn: { ...base.navBtn, background:"rgba(0,0,0,0.05)", color:"#1e293b" },
-  label: { ...base.label, color:"#64748b" },
-  subLabel: { ...base.subLabel, color:"#94a3b8" },
-};
+  navBtn: Object.assign({}, base.navBtn, { background: "rgba(0,0,0,0.05)", color: "#1e293b" }),
+  label: Object.assign({}, base.label, { color: "#64748b" }),
+  subLabel: Object.assign({}, base.subLabel, { color: "#94a3b8" })
+});
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(React.createElement(App));
+const rootEl = ReactDOM.createRoot(document.getElementById('root'));
+rootEl.render(React.createElement(App));
 </script>
 </body>
 </html>
