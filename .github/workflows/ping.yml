@@ -1,6 +1,6 @@
 name: Supabase Ping
 on:
-schedule:
+  schedule:
     - cron: '0 0 */3 * *'  # 3일마다 자동 실행
   workflow_dispatch:
 jobs:
