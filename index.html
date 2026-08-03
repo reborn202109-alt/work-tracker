@@ -279,6 +279,8 @@ function App() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerStart, setTimerStart] = useState(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
+  const [showManualClock, setShowManualClock] = useState(false);
+  const [manualClockTime, setManualClockTime] = useState("");
   const timerRef = useRef(null);
   const saveTimer = useRef(null);
 
@@ -357,6 +359,31 @@ function App() {
     updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()) }); });
     setSelectedDate(todayStr); setTab("today");
   };
+  const handleManualClockIn = function() {
+    const now = new Date();
+    const todayStr = toYMD(now);
+    const savedTime = (data.days[todayStr] || {}).startTime;
+    const currentStart = timerStart ? new Date(timerStart) : null;
+    const defaultTime = savedTime || (currentStart && !Number.isNaN(currentStart.getTime()) ? pad2(currentStart.getHours()) + ":" + pad2(currentStart.getMinutes()) : pad2(now.getHours()) + ":" + pad2(now.getMinutes()));
+    setManualClockTime(defaultTime);
+    setShowManualClock(true);
+  };
+  const saveManualClockIn = function() {
+    const now = new Date();
+    const todayStr = toYMD(now);
+    const match = String(manualClockTime).trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
+    if (!match) { alert("시간을 09:30처럼 입력하세요."); return; }
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(match[1]), Number(match[2]), 0, 0);
+    if (start.getTime() > now.getTime()) { alert("현재 시간보다 뒤의 시간은 입력할 수 없어요."); return; }
+    const iso = start.toISOString();
+    setTimerStart(iso);
+    setTimerRunning(true);
+    setTimerElapsed(Math.floor((now.getTime() - start.getTime()) / 1000));
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso }));
+    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(start.getHours()) + ":" + pad2(start.getMinutes()), endTime: "" }); });
+    setShowManualClock(false);
+    setSelectedDate(todayStr); setTab("today");
+  };
   const handleClockOut = function() {
     const now = new Date();
     setTimerRunning(false); localStorage.removeItem(TIMER_KEY);
@@ -411,15 +438,35 @@ function App() {
               </div>
               <div style={{ fontSize: 11, color: T.muted }}>{goalReached ? "🎉 목표 달성!" : isCountdown ? "⬇️ 카운트다운" : "⬆️ 카운트업"}</div>
             </div>
-            <button onClick={handleClockOut} style={T.clockOutBtn}>🏁 퇴근</button>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={handleManualClockIn} style={{ padding: "7px 10px", background: "rgba(129,140,248,0.14)", border: "1px solid rgba(129,140,248,0.35)", borderRadius: 16, color: "#a5b4fc", fontSize: 11, cursor: "pointer" }}>시작시간 수정</button>
+              <button onClick={handleClockOut} style={T.clockOutBtn}>🏁 퇴근</button>
+            </div>
           </React.Fragment>
         ) : (
           <React.Fragment>
             <div style={{ fontSize: 12, color: T.muted }}>{isCountdown ? ("⬇️ 카운트다운 (목표 " + data.settings.dailyGoalHours + "h)") : "⬆️ 카운트업"}</div>
-            <button onClick={handleClockIn} style={T.clockInBtn}>▶ 출근 시작</button>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={handleManualClockIn} style={{ padding: "7px 10px", background: "rgba(129,140,248,0.14)", border: "1px solid rgba(129,140,248,0.35)", borderRadius: 16, color: "#a5b4fc", fontSize: 11, cursor: "pointer" }}>놓쳤다면 시간입력</button>
+              <button onClick={handleClockIn} style={T.clockInBtn}>▶ 출근 시작</button>
+            </div>
           </React.Fragment>
         )}
       </div>
+
+      {showManualClock && (
+        <div onClick={function() { setShowManualClock(false); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.72)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <div onClick={function(e) { e.stopPropagation(); }} style={Object.assign({}, T.card, { width: "100%", maxWidth: 360, padding: 20, boxShadow: "0 18px 50px rgba(0,0,0,0.45)" })}>
+            <div style={{ fontSize: 17, fontWeight: 800, marginBottom: 6 }}>⏰ 실제 출근시간 입력</div>
+            <div style={{ fontSize: 12, color: T.muted, marginBottom: 14 }}>입력한 시간부터 현재까지 타이머를 다시 계산해요.</div>
+            <input type="time" value={manualClockTime} onChange={function(e) { setManualClockTime(e.target.value); }} style={Object.assign({}, T.input, { fontSize: 22, textAlign: "center", padding: 12 })} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 14 }}>
+              <button onClick={function() { setShowManualClock(false); }} style={{ padding: 11, borderRadius: 9, border: "1px solid " + T.divider, background: "transparent", color: T.muted, cursor: "pointer" }}>취소</button>
+              <button onClick={saveManualClockIn} style={T.primaryBtn}>이 시간부터 시작</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={T.tabBar}>
         {tabs.map(function(t) {
