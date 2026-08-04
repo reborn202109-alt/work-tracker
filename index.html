@@ -85,8 +85,26 @@ function calcHours(start, end, breakMinutes) {
   mins = Math.max(0, mins - (Math.max(0, Number(breakMinutes) || 0)));
   return Math.round((mins / 60) * 100) / 100;
 }
+function calcDayHours(day) {
+  day = day || {};
+  const sessions = Array.isArray(day.workSessions) ? day.workSessions.filter(function(s) { return s && s.start && s.end; }) : [];
+  if (sessions.length) return Math.round(sessions.reduce(function(sum, s) { return sum + calcHours(s.start, s.end, 0); }, 0) * 100) / 100;
+  return calcHours(day.startTime, day.endTime, 0);
+}
 function fmt(n) { return (n == null ? 0 : n).toLocaleString("ko-KR"); }
+function fmtHours(hours, compact) {
+  const totalMinutes = Math.max(0, Math.round((Number(hours) || 0) * 60));
+  const h = Math.floor(totalMinutes / 60), m = totalMinutes % 60;
+  if (compact) return h + "h" + (m ? " " + m + "m" : "");
+  if (!h) return m + "분";
+  return h + "시간" + (m ? " " + m + "분" : "");
+}
 function toYMD(d) { return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()); }
+function getWorkDate(d) {
+  const x = new Date(d.getTime());
+  if (x.getHours() < 6) x.setDate(x.getDate() - 1);
+  return toYMD(x);
+}
 function getMotivation(worked, goal) {
   if (!goal || !worked) return null;
   const arr = worked >= goal ? MOTIVATIONS_SUCCESS : MOTIVATIONS_FAIL;
@@ -275,14 +293,11 @@ function App() {
   const [syncStatus, setSyncStatus] = useState("loading");
   const cloudReadyRef = useRef(false);
   const [tab, setTab] = useState("today");
-  const [selectedDate, setSelectedDate] = useState(function() { return toYMD(new Date()); });
+  const [selectedDate, setSelectedDate] = useState(function() { return getWorkDate(new Date()); });
   const [calMonth, setCalMonth] = useState(function() { const d = new Date(); return { year: d.getFullYear(), month: d.getMonth() }; });
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerStart, setTimerStart] = useState(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
-  const [timerPaused, setTimerPaused] = useState(false);
-  const [pauseStarted, setPauseStarted] = useState(null);
-  const [breakSeconds, setBreakSeconds] = useState(0);
   const [showManualClock, setShowManualClock] = useState(false);
   const [manualClockTime, setManualClockTime] = useState("");
   const timerRef = useRef(null);
@@ -327,9 +342,6 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         setTimerStart(parsed.start);
-        setTimerPaused(!!parsed.paused);
-        setPauseStarted(parsed.pauseStarted || null);
-        setBreakSeconds(Math.max(0, Number(parsed.breakSeconds) || 0));
         setTimerRunning(true);
       }
     } catch (e) {}
@@ -338,8 +350,7 @@ function App() {
   useEffect(function() {
     if (timerRunning && timerStart) {
       const tick = function() {
-        const liveBreak = timerPaused && pauseStarted ? Math.max(0, Math.floor((Date.now() - new Date(pauseStarted).getTime()) / 1000)) : 0;
-        setTimerElapsed(Math.max(0, Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000) - breakSeconds - liveBreak));
+        setTimerElapsed(Math.max(0, Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000)));
       };
       tick();
       timerRef.current = setInterval(tick, 1000);
@@ -347,7 +358,7 @@ function App() {
       clearInterval(timerRef.current);
     }
     return function() { clearInterval(timerRef.current); };
-  }, [timerRunning, timerStart, timerPaused, pauseStarted, breakSeconds]);
+  }, [timerRunning, timerStart]);
 
   const updateDay = useCallback(function(date, updater) {
     setData(function(prev) {
@@ -363,15 +374,19 @@ function App() {
   const handleClockIn = function() {
     const now = new Date();
     const iso = now.toISOString();
-    setTimerStart(iso); setTimerRunning(true); setTimerElapsed(0); setTimerPaused(false); setPauseStarted(null); setBreakSeconds(0);
-    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso, paused: false, pauseStarted: null, breakSeconds: 0 }));
-    const todayStr = toYMD(now);
-    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()), endTime: "", breakMinutes: 0 }); });
+    setTimerStart(iso); setTimerRunning(true); setTimerElapsed(0);
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso }));
+    const todayStr = getWorkDate(now);
+    updateDay(todayStr, function(d) {
+      let sessions = Array.isArray(d.workSessions) ? d.workSessions.slice() : [];
+      if (!sessions.length && d.startTime && d.endTime) sessions.push({ start: d.startTime, end: d.endTime });
+      return Object.assign({}, d, { workSessions: sessions, startTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()), endTime: "", breakMinutes: 0 });
+    });
     setSelectedDate(todayStr); setTab("today");
   };
   const handleManualClockIn = function() {
     const now = new Date();
-    const todayStr = toYMD(now);
+    const todayStr = getWorkDate(now);
     const savedTime = (data.days[todayStr] || {}).startTime;
     const currentStart = timerStart ? new Date(timerStart) : null;
     const defaultTime = savedTime || (currentStart && !Number.isNaN(currentStart.getTime()) ? pad2(currentStart.getHours()) + ":" + pad2(currentStart.getMinutes()) : pad2(now.getHours()) + ":" + pad2(now.getMinutes()));
@@ -380,45 +395,37 @@ function App() {
   };
   const saveManualClockIn = function() {
     const now = new Date();
-    const todayStr = toYMD(now);
+    const todayStr = getWorkDate(now);
     const match = String(manualClockTime).trim().match(/^([01]?\d|2[0-3]):([0-5]\d)$/);
     if (!match) { alert("시간을 09:30처럼 입력하세요."); return; }
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), Number(match[1]), Number(match[2]), 0, 0);
+    const workParts = todayStr.split("-").map(Number);
+    const inputHour = Number(match[1]);
+    const start = new Date(workParts[0], workParts[1] - 1, workParts[2] + (inputHour < 6 ? 1 : 0), inputHour, Number(match[2]), 0, 0);
     if (start.getTime() > now.getTime()) { alert("현재 시간보다 뒤의 시간은 입력할 수 없어요."); return; }
     const iso = start.toISOString();
     setTimerStart(iso);
     setTimerRunning(true);
     setTimerElapsed(Math.floor((now.getTime() - start.getTime()) / 1000));
-    const keptBreak = timerRunning ? breakSeconds : 0;
-    const keptPaused = timerRunning ? timerPaused : false;
-    const keptPauseStarted = keptPaused ? (pauseStarted || now.toISOString()) : null;
-    setBreakSeconds(keptBreak); setTimerPaused(keptPaused); setPauseStarted(keptPauseStarted);
-    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso, paused: keptPaused, pauseStarted: keptPauseStarted, breakSeconds: keptBreak }));
-    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(start.getHours()) + ":" + pad2(start.getMinutes()), endTime: "", breakMinutes: Math.round(keptBreak / 60) }); });
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso }));
+    updateDay(todayStr, function(d) {
+      let sessions = Array.isArray(d.workSessions) ? d.workSessions.slice() : [];
+      if (!sessions.length && d.startTime && d.endTime) sessions.push({ start: d.startTime, end: d.endTime });
+      return Object.assign({}, d, { workSessions: sessions, startTime: pad2(start.getHours()) + ":" + pad2(start.getMinutes()), endTime: "", breakMinutes: 0 });
+    });
     setShowManualClock(false);
     setSelectedDate(todayStr); setTab("today");
   };
-  const handlePause = function() {
-    if (!timerRunning || timerPaused) return;
-    const stamp = new Date().toISOString();
-    setTimerPaused(true); setPauseStarted(stamp);
-    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: timerStart, paused: true, pauseStarted: stamp, breakSeconds: breakSeconds }));
-  };
-  const handleResume = function() {
-    if (!timerRunning || !timerPaused) return;
-    const added = pauseStarted ? Math.max(0, Math.floor((Date.now() - new Date(pauseStarted).getTime()) / 1000)) : 0;
-    const total = breakSeconds + added;
-    setBreakSeconds(total); setTimerPaused(false); setPauseStarted(null);
-    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: timerStart, paused: false, pauseStarted: null, breakSeconds: total }));
-  };
   const handleClockOut = function() {
     const now = new Date();
-    const liveBreak = timerPaused && pauseStarted ? Math.max(0, Math.floor((now.getTime() - new Date(pauseStarted).getTime()) / 1000)) : 0;
-    const totalBreak = breakSeconds + liveBreak;
     setTimerRunning(false); localStorage.removeItem(TIMER_KEY);
-    const todayStr = toYMD(now);
-    updateDay(todayStr, function(d) { return Object.assign({}, d, { endTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()), breakMinutes: Math.round(totalBreak / 60) }); });
-    setTimerElapsed(0); setTimerStart(null); setTimerPaused(false); setPauseStarted(null); setBreakSeconds(0);
+    const todayStr = getWorkDate(now);
+    updateDay(todayStr, function(d) {
+      const end = pad2(now.getHours()) + ":" + pad2(now.getMinutes());
+      let sessions = Array.isArray(d.workSessions) ? d.workSessions.slice() : [];
+      if (d.startTime) sessions.push({ start: d.startTime, end: end });
+      return Object.assign({}, d, { workSessions: sessions, startTime: sessions.length ? sessions[0].start : d.startTime, endTime: end, breakMinutes: 0 });
+    });
+    setTimerElapsed(0); setTimerStart(null);
   };
 
   function fmtTimer(s) {
@@ -462,14 +469,13 @@ function App() {
           <React.Fragment>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 22, fontWeight: 800, color: goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80", fontVariantNumeric: "tabular-nums" }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: timerPaused ? "#fb923c" : goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80" }} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80" }} />
                 {fmtTimer(displaySecs)}
               </div>
-              <div style={{ fontSize: 11, color: timerPaused ? "#fb923c" : T.muted }}>{timerPaused ? "☕ 휴식 중 · 근무시간 멈춤" : goalReached ? "🎉 목표 달성!" : isCountdown ? "⬇️ 카운트다운" : "⬆️ 카운트업"}</div>
+              <div style={{ fontSize: 11, color: T.muted }}>{goalReached ? "🎉 목표 달성!" : isCountdown ? "⬇️ 카운트다운" : "⬆️ 카운트업"}</div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <button onClick={handleManualClockIn} style={{ padding: "7px 10px", background: "rgba(129,140,248,0.14)", border: "1px solid rgba(129,140,248,0.35)", borderRadius: 16, color: "#a5b4fc", fontSize: 11, cursor: "pointer" }}>시작시간 수정</button>
-              <button onClick={timerPaused ? handleResume : handlePause} style={{ padding: "7px 10px", background: timerPaused ? "rgba(74,222,128,0.14)" : "rgba(251,146,60,0.14)", border: "1px solid " + (timerPaused ? "rgba(74,222,128,0.4)" : "rgba(251,146,60,0.4)"), borderRadius: 16, color: timerPaused ? "#4ade80" : "#fb923c", fontSize: 11, cursor: "pointer" }}>{timerPaused ? "▶ 업무 재개" : "⏸ 휴식"}</button>
               <button onClick={handleClockOut} style={T.clockOutBtn}>🏁 퇴근</button>
             </div>
           </React.Fragment>
@@ -521,7 +527,7 @@ function DayInput(props) {
   const day = data.days[date] || {};
   const income = day.incomeItems || [];
   const expenseItems = day.expenseItems || [];
-  const worked = calcHours(day.startTime, day.endTime, day.breakMinutes);
+  const worked = calcDayHours(day);
   const totalIncome = income.reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
   const taxDeducted = income.reduce(function(s, i) { const a = Number(i.amount) || 0; return s + (i.taxable ? a * (1 - settings.taxRate / 100) : a); }, 0);
   const totalExpense = expenseItems.reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
@@ -541,6 +547,20 @@ function DayInput(props) {
       const checked = (d.checkedFixedExpenses || []).concat([ym + "_" + fe.id]);
       return Object.assign({}, d, { expenseItems: items, checkedFixedExpenses: checked });
     });
+  }
+  function saveWorkSessions(sessions) {
+    updateDay(date, function(d) {
+      const valid = sessions.slice();
+      const first = valid.find(function(s) { return s.start; });
+      const ended = valid.filter(function(s) { return s.end; });
+      return Object.assign({}, d, { workSessions: valid, startTime: first ? first.start : "", endTime: ended.length ? ended[ended.length - 1].end : "", breakMinutes: 0 });
+    });
+  }
+  function addWorkSession() {
+    let sessions = Array.isArray(day.workSessions) ? day.workSessions.slice() : [];
+    if (!sessions.length && (day.startTime || day.endTime)) sessions.push({ start: day.startTime || "", end: day.endTime || "" });
+    sessions.push({ start: "", end: "" });
+    saveWorkSessions(sessions);
   }
 
   return (
@@ -592,26 +612,23 @@ function DayInput(props) {
       {!day.isOff && (
         <div style={T.card}>
           <div style={T.label}>⏰ 근무 시간</div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {!(day.workSessions || []).length && <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <div style={{ flex: 1 }}>
               <div style={T.subLabel}>출근</div>
-              <input type="time" value={day.startTime || ""} onChange={function(e) { set("startTime", e.target.value); }} style={T.input} />
+              <input type="time" value={day.startTime || ""} onChange={function(e) { const value=e.target.value; updateDay(date,function(d){return Object.assign({},d,{startTime:value,workSessions:[]});}); }} style={T.input} />
             </div>
             <div style={{ fontSize: 18, paddingTop: 16 }}>→</div>
             <div style={{ flex: 1 }}>
               <div style={T.subLabel}>퇴근</div>
-              <input type="time" value={day.endTime || ""} onChange={function(e) { set("endTime", e.target.value); }} style={T.input} />
+              <input type="time" value={day.endTime || ""} onChange={function(e) { const value=e.target.value; updateDay(date,function(d){return Object.assign({},d,{endTime:value,workSessions:[]});}); }} style={T.input} />
             </div>
-          </div>
-          <div style={{ marginTop: 9 }}>
-            <div style={T.subLabel}>휴식시간 (분)</div>
-            <input type="number" min="0" step="5" value={day.breakMinutes || ""} onChange={function(e) { set("breakMinutes", Math.max(0, Number(e.target.value) || 0)); }} placeholder="예: 60" style={T.input} />
-          </div>
+          </div>}
+          {(day.workSessions || []).length > 0 && <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>{day.workSessions.map(function(s, i) { return <div key={i} style={{ padding: "9px", borderRadius: 9, background: "rgba(129,140,248,0.07)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}><span style={{ fontSize: 11, fontWeight: 700, color: "#a5b4fc" }}>{i + 1}차 근무</span><button onClick={function() { saveWorkSessions(day.workSessions.filter(function(_, j) { return j !== i; })); }} style={T.delBtn}>삭제</button></div><div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 7, alignItems: "center" }}><input type="time" value={s.start || ""} onChange={function(e) { const next=day.workSessions.slice(); next[i]=Object.assign({},next[i],{start:e.target.value}); saveWorkSessions(next); }} style={T.input} /><span>→</span><input type="time" value={s.end || ""} onChange={function(e) { const next=day.workSessions.slice(); next[i]=Object.assign({},next[i],{end:e.target.value}); saveWorkSessions(next); }} style={T.input} /></div>{s.start && s.end && <div style={{ textAlign: "right", fontSize: 10, color: T.muted, marginTop: 5 }}>{fmtHours(calcHours(s.start, s.end, 0))}</div>}</div>; })}</div>}
+          <button onClick={addWorkSession} style={Object.assign({}, T.addBtn, { width: "100%", marginTop: 9 })}>+ 근무 구간 추가</button>
           {worked > 0 && (
             <div style={T.resultBox}>
-              <span>⏱ 실제 근무: <b>{worked}h</b></span>
-              {(Number(day.breakMinutes) || 0) > 0 && <span>휴식 {Number(day.breakMinutes)}분 제외</span>}
-              {settings.dailyGoalHours > 0 && <span>목표 {settings.dailyGoalHours}h {worked >= settings.dailyGoalHours ? "✅" : ("❌ (" + (settings.dailyGoalHours - worked).toFixed(1) + "h 부족)")}</span>}
+              <span>⏱ 합산 근무: <b>{fmtHours(worked)}</b></span>
+              {settings.dailyGoalHours > 0 && <span>목표 {fmtHours(settings.dailyGoalHours)} {worked >= settings.dailyGoalHours ? "✅" : ("❌ (" + fmtHours(settings.dailyGoalHours - worked) + " 부족)")}</span>}
             </div>
           )}
           {motivation && <div style={T.motivationBox}>{motivation}</div>}
@@ -747,7 +764,7 @@ function DayInput(props) {
         <div style={T.summaryCard}>
           <div style={T.summaryTitle}>📋 오늘 요약</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
-            <SI label="근무" value={worked + "h"} />
+            <SI label="근무" value={fmtHours(worked)} />
             <SI label="수입" value={"₩" + fmt(totalIncome)} />
             <SI label="실수령" value={"₩" + fmt(Math.round(taxDeducted))} color="#4ade80" />
             <SI label="지출" value={"₩" + fmt(totalExpense)} color="#f87171" />
@@ -796,7 +813,7 @@ function CalendarView(props) {
             if (!d) return <div key={"e" + i} />;
             const ds = year + "-" + pad2(month + 1) + "-" + pad2(d);
             const dd = days[ds] || {};
-            const worked = calcHours(dd.startTime, dd.endTime, dd.breakMinutes);
+            const worked = calcDayHours(dd);
             const hasIncome = (dd.incomeItems || []).length > 0;
             const isToday = ds === today;
             const goalMet = worked >= settings.dailyGoalHours;
@@ -810,7 +827,7 @@ function CalendarView(props) {
                 {isToday && <div title="오늘" style={{ width: 5, height: 5, borderRadius: "50%", background: "#818cf8", boxShadow: "0 0 6px rgba(129,140,248,0.7)", flexShrink: 0 }} />}
                 {isGoalStart && <div title="목표 시작" style={{ fontSize: 8, color: "#a78bfa", lineHeight: 1 }}>START</div>}
                 {isGoalFinish && <div title="예상 목표일" style={{ fontSize: 11, lineHeight: 1 }}>🏁</div>}
-                {worked > 0 && <div style={{ fontSize: 9, color: goalMet ? "#4ade80" : "#f87171" }}>{worked}h</div>}
+                {worked > 0 && <div style={{ fontSize: 9, color: goalMet ? "#4ade80" : "#f87171" }}>{fmtHours(worked, true)}</div>}
                 {hasIncome && <div style={{ fontSize: 9 }}>💰</div>}
                 {dd.isOff && <div style={{ fontSize: 9 }}>🚫</div>}
                 {dd.weather && <div style={{ fontSize: 9 }}>{(WEATHER_OPTIONS.find(function(w) { return w.label === dd.weather; }) || {}).icon}</div>}
@@ -833,7 +850,7 @@ function MonthSummary(props) {
   let totalWorked = 0, totalIncome = 0, totalTaxed = 0, totalExpense = 0, workDays = 0;
   Object.keys(days).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
     const d = days[k];
-    const w = calcHours(d.startTime, d.endTime, d.breakMinutes);
+    const w = calcDayHours(d);
     if (w > 0) { totalWorked += w; workDays++; }
     (d.incomeItems || []).forEach(function(i) { const a = Number(i.amount) || 0; totalIncome += a; totalTaxed += i.taxable ? a * (1 - settings.taxRate / 100) : a; });
     (d.expenseItems || []).forEach(function(i) { totalExpense += Number(i.amount) || 0; });
@@ -857,7 +874,7 @@ function MonthSummary(props) {
       <div style={T.summaryTitle}>{month + 1}월 요약</div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 10 }}>
         <SI label="근무일" value={workDays + "일"} />
-        <SI label="총 근무" value={totalWorked.toFixed(1) + "h"} />
+        <SI label="총 근무" value={fmtHours(totalWorked)} />
         <SI label="총 수입" value={"₩" + fmt(Math.round(totalIncome))} />
         <SI label="세후 수입" value={"₩" + fmt(Math.round(totalTaxed))} color="#4ade80" />
         <SI label="총 지출" value={"₩" + fmt(Math.round(totalExpense))} color="#f87171" />
@@ -1008,7 +1025,7 @@ function StatsView(props) {
     let inc = 0, taxed = 0, exp = 0, worked = 0;
     Object.keys(days).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
       const d = days[k];
-      const w = calcHours(d.startTime, d.endTime, d.breakMinutes);
+      const w = calcDayHours(d);
       worked += w;
       (d.incomeItems || []).forEach(function(i) { const a = Number(i.amount) || 0; inc += a; taxed += i.taxable ? a * (1 - settings.taxRate / 100) : a; });
       (d.expenseItems || []).forEach(function(i) { exp += Number(i.amount) || 0; });
@@ -1020,7 +1037,7 @@ function StatsView(props) {
   const sortedDayKeys = Object.keys(days).sort().reverse();
   for (let idx = 0; idx < sortedDayKeys.length; idx++) {
     const streakDay = days[sortedDayKeys[idx]];
-    const w = calcHours(streakDay.startTime, streakDay.endTime, streakDay.breakMinutes);
+    const w = calcDayHours(streakDay);
     if (w >= settings.dailyGoalHours && settings.dailyGoalHours > 0) streak++; else break;
   }
   const weekdayStats = [];
@@ -1028,7 +1045,7 @@ function StatsView(props) {
   Object.keys(days).forEach(function(ds) {
     const d = days[ds];
     const dayIdx = new Date(ds + "T00:00:00").getDay();
-    const w = calcHours(d.startTime, d.endTime, d.breakMinutes);
+    const w = calcDayHours(d);
     const inc = (d.incomeItems || []).reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
     if (w > 0 || inc > 0) { weekdayStats[dayIdx].count++; weekdayStats[dayIdx].totalIncome += inc; weekdayStats[dayIdx].totalWorked += w; }
   });
@@ -1119,7 +1136,7 @@ function StatsView(props) {
             <div key={m.month} style={{ padding: "8px 0", borderBottom: "1px solid " + T.divider }}>
               <div style={{ fontWeight: 600, marginBottom: 4 }}>{m.month}월</div>
               <div style={{ display: "flex", gap: 12, fontSize: 12, color: T.muted, flexWrap: "wrap" }}>
-                <span>⏱ {m.worked.toFixed(1)}h</span>
+                <span>⏱ {fmtHours(m.worked)}</span>
                 <span>💰 ₩{fmt(Math.round(m.inc))}</span>
                 <span style={{ color: "#4ade80" }}>세후 ₩{fmt(Math.round(m.taxed))}</span>
                 <span style={{ color: "#f87171" }}>지출 ₩{fmt(Math.round(m.exp))}</span>
