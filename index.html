@@ -76,12 +76,13 @@ const WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
 const MOTIVATIONS_SUCCESS = ["🔥 오늘도 목표 달성! 이 기세 유지해요!", "✨ 완벽해요! 당신은 할 수 있어요!", "🎉 목표 초과 달성! 진짜 열심히 했네요!", "💪 역시! 오늘도 멋지게 해냈어요!"];
 const MOTIVATIONS_FAIL = ["😤 조금만 더 하면 됐는데! 내일은 꼭!", "🪤 이러면 안 되죠~ 내일은 정신 차려요!", "😡 목표도 못 채웠어요?! 반성하고 내일 두 배로!", "💢 채찍! 채찍! 게으름 피우면 안 돼요!"];
 
-function calcHours(start, end) {
+function calcHours(start, end, breakMinutes) {
   if (!start || !end) return 0;
   const sParts = start.split(":").map(Number);
   const eParts = end.split(":").map(Number);
   let mins = (eParts[0] * 60 + eParts[1]) - (sParts[0] * 60 + sParts[1]);
   if (mins < 0) mins += 24 * 60;
+  mins = Math.max(0, mins - (Math.max(0, Number(breakMinutes) || 0)));
   return Math.round((mins / 60) * 100) / 100;
 }
 function fmt(n) { return (n == null ? 0 : n).toLocaleString("ko-KR"); }
@@ -279,6 +280,9 @@ function App() {
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerStart, setTimerStart] = useState(null);
   const [timerElapsed, setTimerElapsed] = useState(0);
+  const [timerPaused, setTimerPaused] = useState(false);
+  const [pauseStarted, setPauseStarted] = useState(null);
+  const [breakSeconds, setBreakSeconds] = useState(0);
   const [showManualClock, setShowManualClock] = useState(false);
   const [manualClockTime, setManualClockTime] = useState("");
   const timerRef = useRef(null);
@@ -323,6 +327,9 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved);
         setTimerStart(parsed.start);
+        setTimerPaused(!!parsed.paused);
+        setPauseStarted(parsed.pauseStarted || null);
+        setBreakSeconds(Math.max(0, Number(parsed.breakSeconds) || 0));
         setTimerRunning(true);
       }
     } catch (e) {}
@@ -330,14 +337,17 @@ function App() {
 
   useEffect(function() {
     if (timerRunning && timerStart) {
-      timerRef.current = setInterval(function() {
-        setTimerElapsed(Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000));
-      }, 1000);
+      const tick = function() {
+        const liveBreak = timerPaused && pauseStarted ? Math.max(0, Math.floor((Date.now() - new Date(pauseStarted).getTime()) / 1000)) : 0;
+        setTimerElapsed(Math.max(0, Math.floor((Date.now() - new Date(timerStart).getTime()) / 1000) - breakSeconds - liveBreak));
+      };
+      tick();
+      timerRef.current = setInterval(tick, 1000);
     } else {
       clearInterval(timerRef.current);
     }
     return function() { clearInterval(timerRef.current); };
-  }, [timerRunning, timerStart]);
+  }, [timerRunning, timerStart, timerPaused, pauseStarted, breakSeconds]);
 
   const updateDay = useCallback(function(date, updater) {
     setData(function(prev) {
@@ -353,10 +363,10 @@ function App() {
   const handleClockIn = function() {
     const now = new Date();
     const iso = now.toISOString();
-    setTimerStart(iso); setTimerRunning(true); setTimerElapsed(0);
-    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso }));
+    setTimerStart(iso); setTimerRunning(true); setTimerElapsed(0); setTimerPaused(false); setPauseStarted(null); setBreakSeconds(0);
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso, paused: false, pauseStarted: null, breakSeconds: 0 }));
     const todayStr = toYMD(now);
-    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()) }); });
+    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()), endTime: "", breakMinutes: 0 }); });
     setSelectedDate(todayStr); setTab("today");
   };
   const handleManualClockIn = function() {
@@ -379,17 +389,36 @@ function App() {
     setTimerStart(iso);
     setTimerRunning(true);
     setTimerElapsed(Math.floor((now.getTime() - start.getTime()) / 1000));
-    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso }));
-    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(start.getHours()) + ":" + pad2(start.getMinutes()), endTime: "" }); });
+    const keptBreak = timerRunning ? breakSeconds : 0;
+    const keptPaused = timerRunning ? timerPaused : false;
+    const keptPauseStarted = keptPaused ? (pauseStarted || now.toISOString()) : null;
+    setBreakSeconds(keptBreak); setTimerPaused(keptPaused); setPauseStarted(keptPauseStarted);
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: iso, paused: keptPaused, pauseStarted: keptPauseStarted, breakSeconds: keptBreak }));
+    updateDay(todayStr, function(d) { return Object.assign({}, d, { startTime: pad2(start.getHours()) + ":" + pad2(start.getMinutes()), endTime: "", breakMinutes: Math.round(keptBreak / 60) }); });
     setShowManualClock(false);
     setSelectedDate(todayStr); setTab("today");
   };
+  const handlePause = function() {
+    if (!timerRunning || timerPaused) return;
+    const stamp = new Date().toISOString();
+    setTimerPaused(true); setPauseStarted(stamp);
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: timerStart, paused: true, pauseStarted: stamp, breakSeconds: breakSeconds }));
+  };
+  const handleResume = function() {
+    if (!timerRunning || !timerPaused) return;
+    const added = pauseStarted ? Math.max(0, Math.floor((Date.now() - new Date(pauseStarted).getTime()) / 1000)) : 0;
+    const total = breakSeconds + added;
+    setBreakSeconds(total); setTimerPaused(false); setPauseStarted(null);
+    localStorage.setItem(TIMER_KEY, JSON.stringify({ start: timerStart, paused: false, pauseStarted: null, breakSeconds: total }));
+  };
   const handleClockOut = function() {
     const now = new Date();
+    const liveBreak = timerPaused && pauseStarted ? Math.max(0, Math.floor((now.getTime() - new Date(pauseStarted).getTime()) / 1000)) : 0;
+    const totalBreak = breakSeconds + liveBreak;
     setTimerRunning(false); localStorage.removeItem(TIMER_KEY);
     const todayStr = toYMD(now);
-    updateDay(todayStr, function(d) { return Object.assign({}, d, { endTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()) }); });
-    setTimerElapsed(0); setTimerStart(null);
+    updateDay(todayStr, function(d) { return Object.assign({}, d, { endTime: pad2(now.getHours()) + ":" + pad2(now.getMinutes()), breakMinutes: Math.round(totalBreak / 60) }); });
+    setTimerElapsed(0); setTimerStart(null); setTimerPaused(false); setPauseStarted(null); setBreakSeconds(0);
   };
 
   function fmtTimer(s) {
@@ -433,13 +462,14 @@ function App() {
           <React.Fragment>
             <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 22, fontWeight: 800, color: goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80", fontVariantNumeric: "tabular-nums" }}>
-                <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80" }} />
+                <span style={{ width: 8, height: 8, borderRadius: "50%", display: "inline-block", background: timerPaused ? "#fb923c" : goalReached ? "#facc15" : isCountdown ? "#f87171" : "#4ade80" }} />
                 {fmtTimer(displaySecs)}
               </div>
-              <div style={{ fontSize: 11, color: T.muted }}>{goalReached ? "🎉 목표 달성!" : isCountdown ? "⬇️ 카운트다운" : "⬆️ 카운트업"}</div>
+              <div style={{ fontSize: 11, color: timerPaused ? "#fb923c" : T.muted }}>{timerPaused ? "☕ 휴식 중 · 근무시간 멈춤" : goalReached ? "🎉 목표 달성!" : isCountdown ? "⬇️ 카운트다운" : "⬆️ 카운트업"}</div>
             </div>
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
               <button onClick={handleManualClockIn} style={{ padding: "7px 10px", background: "rgba(129,140,248,0.14)", border: "1px solid rgba(129,140,248,0.35)", borderRadius: 16, color: "#a5b4fc", fontSize: 11, cursor: "pointer" }}>시작시간 수정</button>
+              <button onClick={timerPaused ? handleResume : handlePause} style={{ padding: "7px 10px", background: timerPaused ? "rgba(74,222,128,0.14)" : "rgba(251,146,60,0.14)", border: "1px solid " + (timerPaused ? "rgba(74,222,128,0.4)" : "rgba(251,146,60,0.4)"), borderRadius: 16, color: timerPaused ? "#4ade80" : "#fb923c", fontSize: 11, cursor: "pointer" }}>{timerPaused ? "▶ 업무 재개" : "⏸ 휴식"}</button>
               <button onClick={handleClockOut} style={T.clockOutBtn}>🏁 퇴근</button>
             </div>
           </React.Fragment>
@@ -491,7 +521,7 @@ function DayInput(props) {
   const day = data.days[date] || {};
   const income = day.incomeItems || [];
   const expenseItems = day.expenseItems || [];
-  const worked = calcHours(day.startTime, day.endTime);
+  const worked = calcHours(day.startTime, day.endTime, day.breakMinutes);
   const totalIncome = income.reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
   const taxDeducted = income.reduce(function(s, i) { const a = Number(i.amount) || 0; return s + (i.taxable ? a * (1 - settings.taxRate / 100) : a); }, 0);
   const totalExpense = expenseItems.reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
@@ -573,9 +603,14 @@ function DayInput(props) {
               <input type="time" value={day.endTime || ""} onChange={function(e) { set("endTime", e.target.value); }} style={T.input} />
             </div>
           </div>
+          <div style={{ marginTop: 9 }}>
+            <div style={T.subLabel}>휴식시간 (분)</div>
+            <input type="number" min="0" step="5" value={day.breakMinutes || ""} onChange={function(e) { set("breakMinutes", Math.max(0, Number(e.target.value) || 0)); }} placeholder="예: 60" style={T.input} />
+          </div>
           {worked > 0 && (
             <div style={T.resultBox}>
-              <span>⏱ 근무: <b>{worked}h</b></span>
+              <span>⏱ 실제 근무: <b>{worked}h</b></span>
+              {(Number(day.breakMinutes) || 0) > 0 && <span>휴식 {Number(day.breakMinutes)}분 제외</span>}
               {settings.dailyGoalHours > 0 && <span>목표 {settings.dailyGoalHours}h {worked >= settings.dailyGoalHours ? "✅" : ("❌ (" + (settings.dailyGoalHours - worked).toFixed(1) + "h 부족)")}</span>}
             </div>
           )}
@@ -761,7 +796,7 @@ function CalendarView(props) {
             if (!d) return <div key={"e" + i} />;
             const ds = year + "-" + pad2(month + 1) + "-" + pad2(d);
             const dd = days[ds] || {};
-            const worked = calcHours(dd.startTime, dd.endTime);
+            const worked = calcHours(dd.startTime, dd.endTime, dd.breakMinutes);
             const hasIncome = (dd.incomeItems || []).length > 0;
             const isToday = ds === today;
             const goalMet = worked >= settings.dailyGoalHours;
@@ -798,7 +833,7 @@ function MonthSummary(props) {
   let totalWorked = 0, totalIncome = 0, totalTaxed = 0, totalExpense = 0, workDays = 0;
   Object.keys(days).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
     const d = days[k];
-    const w = calcHours(d.startTime, d.endTime);
+    const w = calcHours(d.startTime, d.endTime, d.breakMinutes);
     if (w > 0) { totalWorked += w; workDays++; }
     (d.incomeItems || []).forEach(function(i) { const a = Number(i.amount) || 0; totalIncome += a; totalTaxed += i.taxable ? a * (1 - settings.taxRate / 100) : a; });
     (d.expenseItems || []).forEach(function(i) { totalExpense += Number(i.amount) || 0; });
@@ -973,7 +1008,7 @@ function StatsView(props) {
     let inc = 0, taxed = 0, exp = 0, worked = 0;
     Object.keys(days).filter(function(k) { return k.indexOf(prefix) === 0; }).forEach(function(k) {
       const d = days[k];
-      const w = calcHours(d.startTime, d.endTime);
+      const w = calcHours(d.startTime, d.endTime, d.breakMinutes);
       worked += w;
       (d.incomeItems || []).forEach(function(i) { const a = Number(i.amount) || 0; inc += a; taxed += i.taxable ? a * (1 - settings.taxRate / 100) : a; });
       (d.expenseItems || []).forEach(function(i) { exp += Number(i.amount) || 0; });
@@ -984,7 +1019,8 @@ function StatsView(props) {
   let streak = 0;
   const sortedDayKeys = Object.keys(days).sort().reverse();
   for (let idx = 0; idx < sortedDayKeys.length; idx++) {
-    const w = calcHours(days[sortedDayKeys[idx]].startTime, days[sortedDayKeys[idx]].endTime);
+    const streakDay = days[sortedDayKeys[idx]];
+    const w = calcHours(streakDay.startTime, streakDay.endTime, streakDay.breakMinutes);
     if (w >= settings.dailyGoalHours && settings.dailyGoalHours > 0) streak++; else break;
   }
   const weekdayStats = [];
@@ -992,7 +1028,7 @@ function StatsView(props) {
   Object.keys(days).forEach(function(ds) {
     const d = days[ds];
     const dayIdx = new Date(ds + "T00:00:00").getDay();
-    const w = calcHours(d.startTime, d.endTime);
+    const w = calcHours(d.startTime, d.endTime, d.breakMinutes);
     const inc = (d.incomeItems || []).reduce(function(s, i) { return s + (Number(i.amount) || 0); }, 0);
     if (w > 0 || inc > 0) { weekdayStats[dayIdx].count++; weekdayStats[dayIdx].totalIncome += inc; weekdayStats[dayIdx].totalWorked += w; }
   });
