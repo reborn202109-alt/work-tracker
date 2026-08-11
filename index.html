@@ -25,7 +25,7 @@ const { useState, useEffect, useCallback, useRef } = React;
 const STORAGE_KEY = "work_tracker_v2";
 const TIMER_KEY = "work_timer_v2";
 const STORAGE_UPDATED_KEY = "work_tracker_v2_updated_at";
-const GOAL_DEFAULT = { enabled: false, name: "", targetAmount: 0, startingAmount: 0, dailyAmount: 0, startDate: "", excludeFixedOffDays: true, excludeHolidays: false, originalFinishDate: "" };
+const GOAL_DEFAULT = { enabled: false, name: "", targetAmount: 0, startingAmount: 0, dailyAmount: 0, startDate: "", excludeFixedOffDays: true, excludeHolidays: false, originalFinishDate: "", payments: [], showRemaining: true };
 
 const SUPABASE_URL = "https://havjlvtpgqimgkgbblif.supabase.co";
 const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhhdmpsdnRwZ3FpbWdrZ2JibGlmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk5MDg1NjMsImV4cCI6MjA5NTQ4NDU2M30.FZIJ_N07cui-todQjR1z5A5dyqae_Nq5Nw5Jrs4ViM4";
@@ -210,8 +210,8 @@ function goalDateDiff(from, to) {
 }
 function isGoalWorkDay(dateStr, data, goal) {
   const day = data.days[dateStr] || {};
-  if (day.startTime) return true;
   if (day.isOff) return false;
+  if (day.startTime || (day.workSessions || []).length > 0) return true;
   if (goal.excludeFixedOffDays && (data.settings.fixedOffDays || []).indexOf(parseGoalDate(dateStr).getDay()) !== -1) return false;
   if (goal.excludeHolidays && (data.settings.holidays || []).indexOf(dateStr) !== -1) return false;
   return true;
@@ -230,21 +230,19 @@ function getGoalSummary(data) {
   const goal = Object.assign({}, GOAL_DEFAULT, data.settings.goalProject || {});
   const target = Math.max(0, Number(goal.targetAmount) || 0);
   const daily = Math.max(0, Number(goal.dailyAmount) || 0);
-  let achieved = Math.max(0, Number(goal.startingAmount) || 0);
-  let actualFinishDate = achieved >= target && target > 0 ? goal.startDate : "";
-  Object.keys(data.days).sort().forEach(function(ds) {
-    if (goal.startDate && ds < goal.startDate) return;
-    achieved += Math.max(0, Number((data.days[ds] || {}).goalContribution) || 0);
-    if (!actualFinishDate && target > 0 && achieved >= target) actualFinishDate = ds;
-  });
-  achieved = Math.min(achieved, target || achieved);
-  const remaining = Math.max(0, target - achieved);
-  const remainingWorkDays = daily > 0 ? Math.ceil(remaining / daily) : 0;
+  const remainingWorkDays = daily > 0 ? Math.ceil(target / daily) : 0;
   const today = toYMD(new Date());
-  const todayRecorded = Math.max(0, Number((data.days[today] || {}).goalContribution) || 0);
-  const base = !goal.startDate || goal.startDate > today ? goal.startDate : (todayRecorded > 0 ? addGoalDays(today, 1) : today);
-  const finishDate = remaining <= 0 ? actualFinishDate : projectGoalFinish(base, remainingWorkDays, data, goal);
-  return { goal: goal, target: target, daily: daily, achieved: achieved, remaining: remaining, progress: target > 0 ? Math.min(100, achieved / target * 100) : 0, remainingWorkDays: remainingWorkDays, finishDate: finishDate, actualFinishDate: actualFinishDate, dday: finishDate ? goalDateDiff(today, finishDate) : null, scheduleDiff: goal.originalFinishDate && finishDate ? goalDateDiff(goal.originalFinishDate, finishDate) : 0 };
+  const finishDate = projectGoalFinish(goal.startDate, remainingWorkDays, data, goal);
+  const payments = Array.isArray(goal.payments) ? goal.payments : [];
+  const paid = Math.min(target, payments.reduce(function(sum, x) { return sum + Math.max(0, Number(x.amount) || 0); }, 0));
+  const remaining = Math.max(0, target - paid);
+  const progress = target > 0 ? Math.min(100, paid / target * 100) : 0;
+  const health = Math.max(0, 100 - progress);
+  const healthColor = health <= 25 ? "linear-gradient(90deg,#991b1b,#ef4444,#f87171)" : "linear-gradient(90deg,#ca8a04,#eab308,#fde047)";
+  const milestones = [10, 25, 50, 75, 90, 100];
+  const nextPercent = progress >= 100 ? 100 : (milestones.find(function(x) { return x > progress; }) || 100);
+  const nextAmount = progress >= 100 ? 0 : Math.max(0, Math.ceil(target * nextPercent / 100 - paid));
+  return { goal: goal, target: target, daily: daily, payments: payments, paid: paid, remaining: remaining, progress: progress, health: health, healthColor: healthColor, nextPercent: nextPercent, nextAmount: nextAmount, remainingWorkDays: remainingWorkDays, finishDate: finishDate, dday: finishDate ? goalDateDiff(today, finishDate) : null };
 }
 
 const DEFAULT_DATA = {
@@ -511,7 +509,7 @@ function App() {
       </div>
 
       <div style={{ padding: "12px 12px 80px" }}>
-        {tab === "today" && <DayInput date={selectedDate} setDate={setSelectedDate} data={data} updateDay={updateDay} T={T} />}
+        {tab === "today" && <DayInput date={selectedDate} setDate={setSelectedDate} data={data} updateDay={updateDay} updateSettings={updateSettings} T={T} />}
         {tab === "calendar" && <CalendarView data={data} calMonth={calMonth} setCalMonth={setCalMonth} setSelectedDate={function(d) { setSelectedDate(d); setTab("today"); }} T={T} />}
         {tab === "settlement" && <SettlementView data={data} T={T} />}
         {tab === "stats" && <StatsView data={data} T={T} />}
@@ -522,7 +520,7 @@ function App() {
 }
 
 function DayInput(props) {
-  const date = props.date, setDate = props.setDate, data = props.data, updateDay = props.updateDay, T = props.T;
+  const date = props.date, setDate = props.setDate, data = props.data, updateDay = props.updateDay, updateSettings = props.updateSettings, T = props.T;
   const settings = data.settings;
   const day = data.days[date] || {};
   const income = day.incomeItems || [];
@@ -537,8 +535,29 @@ function DayInput(props) {
   const pendingFixed = getPendingFixedExpenses(date, data);
   const goalSummary = getGoalSummary(data);
   const goal = goalSummary.goal;
-  const [goalInput, setGoalInput] = useState("");
-  useEffect(function() { setGoalInput(day.goalContribution == null ? "" : String(day.goalContribution)); }, [date, day.goalContribution]);
+  const [bossAmount, setBossAmount] = useState("");
+
+  function attackDebt(amount) {
+    const value = Math.min(goalSummary.remaining, Math.max(0, Number(amount) || 0));
+    if (value <= 0) return;
+    const requested = Math.max(0, Number(amount) || 0);
+    const adjustedText = requested > goalSummary.remaining ? "\n남은 빚보다 큰 금액이라 " + fmt(value) + "원만 적용됩니다." : "";
+    if (!window.confirm("💥 " + fmt(value) + "원을 빚에서 차감할까요?" + adjustedText)) return;
+    const hit = { id: Date.now(), date: date, amount: value };
+    updateSettings(function(s) {
+      const current = Object.assign({}, GOAL_DEFAULT, s.goalProject || {});
+      return Object.assign({}, s, { goalProject: Object.assign({}, current, { payments: (current.payments || []).concat([hit]) }) });
+    });
+    setBossAmount("");
+  }
+  function undoDebtAttack() {
+    updateSettings(function(s) {
+      const current = Object.assign({}, GOAL_DEFAULT, s.goalProject || {});
+      const payments = (current.payments || []).slice();
+      payments.pop();
+      return Object.assign({}, s, { goalProject: Object.assign({}, current, { payments: payments }) });
+    });
+  }
 
   function checkFixedExpense(fe) {
     const ym = date.slice(0, 7);
@@ -565,38 +584,27 @@ function DayInput(props) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {(goal.enabled || goalSummary.target > 0) && (
+        <div style={Object.assign({}, T.card, { border: "1px solid rgba(248,113,113,0.38)", background: "linear-gradient(135deg,rgba(127,29,29,0.18),rgba(129,140,248,0.08))" })}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
+            <div><div style={{ fontSize: 13, color: "#f87171", fontWeight: 900 }}>👹 빚 보스</div><div style={{ fontSize: 10, color: T.muted, marginTop: 3 }}>상환할 때마다 체력을 깎아보세요</div></div>
+            <button onClick={function() { updateSettings(function(s) { return Object.assign({}, s, { goalProject: Object.assign({}, s.goalProject, { showRemaining: !goal.showRemaining }) }); }); }} style={{ border: 0, background: "transparent", color: T.muted, cursor: "pointer", fontSize: 11 }}>{goal.showRemaining ? "금액 숨기기" : "금액 보기"}</button>
+          </div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", marginTop: 13 }}><div><div style={{ fontSize: 10, color: T.muted }}>남은 보스 체력</div><div style={{ fontSize: 24, fontWeight: 900, color: goalSummary.health <= 25 ? "#f87171" : "#facc15" }}>{goalSummary.health.toFixed(1)}%</div></div><div style={{ textAlign: "right" }}><div style={{ fontSize: 10, color: T.muted }}>누적 공격</div><div style={{ fontSize: 14, fontWeight: 800, color: "#4ade80" }}>{fmt(goalSummary.paid)}원</div></div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 9, fontSize: 9, color: T.muted }}><span>보스 체력</span><span>{goalSummary.health.toFixed(1)}%</span></div>
+          <div style={{ height: 16, borderRadius: 20, background: "rgba(0,0,0,0.38)", overflow: "hidden", marginTop: 4, border: "1px solid rgba(250,204,21,0.28)", boxShadow: goalSummary.health <= 25 && goalSummary.health > 0 ? "0 0 12px rgba(239,68,68,0.38)" : "0 0 9px rgba(250,204,21,0.18)" }}><div style={{ height: "100%", width: goalSummary.health + "%", background: goalSummary.healthColor, borderRadius: 20, transition: "width .45s ease, background .3s ease", boxShadow: "inset 0 1px 2px rgba(255,255,255,0.35)" }} /></div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 7, fontSize: 10 }}><span style={{ color: T.muted }}>{goalSummary.progress >= 100 ? "🎉 보스 격파 완료" : "다음 목표: " + goalSummary.nextPercent + "% 격파"}</span><b style={{ color: "#facc15" }}>{goalSummary.progress >= 100 ? "완납!" : "앞으로 " + fmt(goalSummary.nextAmount) + "원"}</b></div>
+          {goal.showRemaining && <div style={{ marginTop: 10, padding: 9, borderRadius: 9, background: "rgba(0,0,0,0.18)", display: "flex", justifyContent: "space-between", fontSize: 11 }}><span style={{ color: T.muted }}>남은 빚</span><b style={{ color: "#f87171" }}>{fmt(goalSummary.remaining)}원</b></div>}
+          {goalSummary.remaining > 0 && <React.Fragment><div style={{ display: "flex", gap: 6, marginTop: 10 }}>{[10000,30000,50000,100000].map(function(v) { return <button key={v} onClick={function() { setBossAmount(String(v)); }} style={{ flex: 1, padding: "7px 2px", borderRadius: 8, border: "1px solid rgba(248,113,113,0.25)", background: "rgba(248,113,113,0.08)", color: "#fca5a5", cursor: "pointer", fontSize: 10 }}>{v / 10000}만원</button>; })}</div><div style={{ display: "flex", gap: 7, marginTop: 8 }}><input type="number" min="0" value={bossAmount} onChange={function(e) { setBossAmount(e.target.value); }} placeholder="상환금액 입력" style={Object.assign({}, T.input, { flex: 1 })} /><button onClick={function() { attackDebt(bossAmount); }} style={{ padding: "0 14px", borderRadius: 9, border: 0, background: "linear-gradient(135deg,#ef4444,#f97316)", color: "white", fontWeight: 900, cursor: "pointer" }}>💥 빚 부수기</button></div></React.Fragment>}
+          {goalSummary.payments.length > 0 && <div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid rgba(255,255,255,0.08)" }}><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 10 }}><span style={{ color: T.muted }}>최근 공격 · {goalSummary.payments[goalSummary.payments.length - 1].date} · {fmt(goalSummary.payments[goalSummary.payments.length - 1].amount)}원</span><button onClick={undoDebtAttack} style={{ border: 0, background: "transparent", color: "#f87171", cursor: "pointer", fontSize: 10 }}>↩ 되돌리기</button></div></div>}
+        </div>
+      )}
+
       <div style={T.card}>
         <label style={T.label}>날짜 선택</label>
         <input type="date" value={date} onChange={function(e) { setDate(e.target.value); }} style={T.input} />
         {isFixedOff && !day.isOff && <div style={T.offBadge}>🛌 고정 휴일</div>}
       </div>
-
-      {goal.enabled && date >= goal.startDate && (
-        <div style={Object.assign({}, T.card, { border: "1px solid rgba(250,204,21,0.28)", background: "linear-gradient(135deg,rgba(250,204,21,0.08),rgba(129,140,248,0.06))" })}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 10, alignItems: "flex-start" }}>
-            <div>
-              <div style={{ fontSize: 12, color: "#facc15", fontWeight: 700 }}>🏁 {goal.name}</div>
-              <div style={{ fontSize: 11, color: T.muted, marginTop: 4 }}>달성 {fmt(goalSummary.achieved)}원 · 남음 {fmt(goalSummary.remaining)}원</div>
-            </div>
-            <div style={{ textAlign: "right", fontSize: 11, color: "#c4b5fd" }}>
-              {goalSummary.remaining <= 0 ? "목표 완료" : goalSummary.remainingWorkDays + "번 출근 남음"}
-            </div>
-          </div>
-          <div style={{ height: 7, borderRadius: 9, background: "rgba(255,255,255,0.08)", overflow: "hidden", margin: "10px 0" }}>
-            <div style={{ height: "100%", width: goalSummary.progress + "%", background: "linear-gradient(90deg,#818cf8,#facc15)", borderRadius: 9 }} />
-          </div>
-          <div style={{ display: "flex", gap: 7 }}>
-            <input type="number" min="0" value={goalInput} onChange={function(e) { setGoalInput(e.target.value); }} placeholder={"오늘 목표 " + fmt(goal.dailyAmount) + "원"} style={Object.assign({}, T.input, { flex: 1 })} />
-            <button onClick={function() { const amount = Math.max(0, Number(goalInput || goal.dailyAmount) || 0); set("goalContribution", amount); setGoalInput(String(amount)); }} style={Object.assign({}, T.primaryBtn, { width: "auto", padding: "0 14px" })}>기록</button>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, fontSize: 10, color: T.muted }}>
-            <span>비워두고 기록하면 하루 목표액 입력</span>
-            {day.goalContribution > 0 && <button onClick={function() { set("goalContribution", 0); setGoalInput(""); }} style={{ border: 0, background: "transparent", color: "#f87171", cursor: "pointer" }}>기록 취소</button>}
-          </div>
-          {goalSummary.finishDate && <div style={{ marginTop: 10, paddingTop: 9, borderTop: "1px solid rgba(255,255,255,0.08)", display: "flex", justifyContent: "space-between", fontSize: 11 }}><span style={{ color: T.muted }}>예상 완료일</span><b style={{ color: "#facc15" }}>{goalSummary.finishDate} · {goalSummary.remaining <= 0 ? "완료" : goalSummary.dday === 0 ? "D-DAY" : goalSummary.dday > 0 ? "D-" + goalSummary.dday : "D+" + Math.abs(goalSummary.dday)}</b></div>}
-          {goalSummary.scheduleDiff !== 0 && goalSummary.remaining > 0 && <div style={{ marginTop: 5, textAlign: "right", fontSize: 10, color: goalSummary.scheduleDiff < 0 ? "#4ade80" : "#fb923c" }}>{goalSummary.scheduleDiff < 0 ? Math.abs(goalSummary.scheduleDiff) + "일 앞당김" : goalSummary.scheduleDiff + "일 지연"}</div>}
-        </div>
-      )}
 
       <div style={T.card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -1158,19 +1166,23 @@ function SettingsView(props) {
   const [newFE, setNewFE] = useState({ name: "", amount: "", dayOfMonth: "", category: "" });
   const [holidayInput, setHolidayInput] = useState("");
   const [goalDraft, setGoalDraft] = useState(function() { return Object.assign({}, GOAL_DEFAULT, settings.goalProject || {}); });
+  const savedGoalSummary = getGoalSummary(data);
 
   function saveGoalProject() {
     const next = Object.assign({}, GOAL_DEFAULT, goalDraft, {
       enabled: true,
+      name: "빚 갚기",
       targetAmount: Math.max(0, Number(goalDraft.targetAmount) || 0),
-      startingAmount: Math.max(0, Number(goalDraft.startingAmount) || 0),
-      dailyAmount: Math.max(0, Number(goalDraft.dailyAmount) || 0)
+      startingAmount: 0,
+      dailyAmount: Math.max(0, Number(goalDraft.dailyAmount) || 0),
+      excludeFixedOffDays: true,
+      excludeHolidays: false
     });
-    if (!next.name.trim() || !next.startDate || next.targetAmount <= 0 || next.dailyAmount <= 0) {
-      alert("목표 이름, 목표금액, 하루 목표액, 시작일을 확인하세요.");
+    if (!next.startDate || next.targetAmount <= 0 || next.dailyAmount <= 0) {
+      alert("갚아야 할 빚, 하루 목표금액, 시작일을 확인하세요.");
       return;
     }
-    const workDays = Math.ceil(Math.max(0, next.targetAmount - next.startingAmount) / next.dailyAmount);
+    const workDays = Math.ceil(next.targetAmount / next.dailyAmount);
     next.originalFinishDate = projectGoalFinish(next.startDate, workDays, data, next);
     updateSettings(function(s) { return Object.assign({}, s, { goalProject: next }); });
     setGoalDraft(next);
@@ -1215,22 +1227,25 @@ function SettingsView(props) {
       <div style={Object.assign({}, T.card, { border: "1px solid rgba(250,204,21,0.28)" })}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
           <div>
-            <div style={{ fontSize: 13, fontWeight: 800, color: "#facc15" }}>🏁 목표금액 프로젝트</div>
-            <div style={{ fontSize: 10, color: T.muted, marginTop: 3 }}>빚 청산, 1억 모으기 등 자유롭게 설정</div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#facc15" }}>🏁 빚 갚기 계산기</div>
+            <div style={{ fontSize: 10, color: T.muted, marginTop: 3 }}>하루 목표금액으로 언제 다 갚는지 계산</div>
           </div>
           {settings.goalProject && settings.goalProject.enabled && <span style={{ fontSize: 10, color: "#4ade80" }}>진행 중</span>}
         </div>
-        <div style={T.subLabel}>목표 이름</div>
-        <input value={goalDraft.name} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { name: e.target.value })); }} placeholder="예: 2,400만원 빚 청산" style={T.input} />
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginTop: 8 }}>
-          <div><div style={T.subLabel}>목표금액</div><input type="number" value={goalDraft.targetAmount || ""} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { targetAmount: e.target.value })); }} placeholder="24000000" style={T.input} /></div>
-          <div><div style={T.subLabel}>이미 달성한 금액</div><input type="number" value={goalDraft.startingAmount || ""} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { startingAmount: e.target.value })); }} placeholder="0" style={T.input} /></div>
-          <div><div style={T.subLabel}>출근 1회 목표액</div><input type="number" value={goalDraft.dailyAmount || ""} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { dailyAmount: e.target.value })); }} placeholder="100000" style={T.input} /></div>
+          <div><div style={T.subLabel}>갚아야 할 빚</div><input type="number" value={goalDraft.targetAmount || ""} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { targetAmount: e.target.value })); }} placeholder="24000000" style={T.input} /></div>
+          <div><div style={T.subLabel}>하루 목표금액</div><input type="number" value={goalDraft.dailyAmount || ""} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { dailyAmount: e.target.value })); }} placeholder="100000" style={T.input} /></div>
           <div><div style={T.subLabel}>시작일</div><input type="date" value={goalDraft.startDate || ""} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { startDate: e.target.value })); }} style={T.input} /><button onClick={function() { setGoalDraft(Object.assign({}, goalDraft, { startDate: toYMD(new Date()) })); }} style={{ border: 0, background: "transparent", color: "#818cf8", fontSize: 10, cursor: "pointer", marginTop: 4 }}>오늘부터</button></div>
         </div>
-        <label style={{ display: "flex", gap: 7, alignItems: "center", fontSize: 11, color: T.muted, marginTop: 10 }}><input type="checkbox" checked={!!goalDraft.excludeFixedOffDays} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { excludeFixedOffDays: e.target.checked })); }} /> 고정 휴무일 제외</label>
-        <label style={{ display: "flex", gap: 7, alignItems: "center", fontSize: 11, color: T.muted, marginTop: 7 }}><input type="checkbox" checked={!!goalDraft.excludeHolidays} onChange={function(e) { setGoalDraft(Object.assign({}, goalDraft, { excludeHolidays: e.target.checked })); }} /> 등록한 공휴일 제외</label>
-        <button onClick={saveGoalProject} style={Object.assign({}, T.primaryBtn, { marginTop: 13 })}>목표 저장하고 계산</button>
+        <div style={{ fontSize: 10, color: T.muted, marginTop: 10 }}>아래에서 설정한 고정 휴무와 일지에서 체크한 휴무일은 자동으로 제외됩니다.</div>
+        <button onClick={saveGoalProject} style={Object.assign({}, T.primaryBtn, { marginTop: 13 })}>예상 완료일 계산</button>
+        {settings.goalProject && settings.goalProject.enabled && savedGoalSummary.finishDate && <div style={{ marginTop: 12, padding: 12, borderRadius: 10, background: "rgba(250,204,21,0.08)", border: "1px solid rgba(250,204,21,0.22)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "end", marginBottom: 7 }}><div><div style={{ fontSize: 10, color: T.muted }}>👹 남은 보스 체력</div><b style={{ fontSize: 21, color: savedGoalSummary.health <= 25 ? "#f87171" : "#facc15" }}>{savedGoalSummary.health.toFixed(1)}%</b></div><div style={{ textAlign: "right", fontSize: 10, color: T.muted }}>누적 공격 {fmt(savedGoalSummary.paid)}원</div></div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 9, color: T.muted, marginBottom: 4 }}><span>보스 체력</span><span>{savedGoalSummary.health.toFixed(1)}%</span></div><div style={{ height: 14, borderRadius: 20, background: "rgba(0,0,0,0.35)", overflow: "hidden", marginBottom: 10, boxShadow: savedGoalSummary.health <= 25 && savedGoalSummary.health > 0 ? "0 0 10px rgba(239,68,68,0.35)" : "none" }}><div style={{ height: "100%", width: savedGoalSummary.health + "%", borderRadius: 20, background: savedGoalSummary.healthColor, transition: "width .45s ease, background .3s ease" }} /></div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}><span style={{ color: T.muted }}>필요한 근무일</span><b style={{ color: "#c4b5fd" }}>{savedGoalSummary.remainingWorkDays}일</b></div>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginTop: 7 }}><span style={{ color: T.muted }}>예상 완료일</span><b style={{ color: "#facc15" }}>{savedGoalSummary.finishDate}</b></div>
+          <div style={{ textAlign: "right", fontSize: 11, color: "#facc15", marginTop: 5 }}>{savedGoalSummary.dday === 0 ? "D-DAY" : savedGoalSummary.dday > 0 ? "D-" + savedGoalSummary.dday : "D+" + Math.abs(savedGoalSummary.dday)}</div>
+        </div>}
         {settings.goalProject && settings.goalProject.enabled && <button onClick={function() { const off = Object.assign({}, settings.goalProject, { enabled: false }); updateSettings(function(s) { return Object.assign({}, s, { goalProject: off }); }); setGoalDraft(off); }} style={{ width: "100%", marginTop: 8, padding: 9, borderRadius: 9, border: "1px solid rgba(248,113,113,0.35)", background: "transparent", color: "#f87171", cursor: "pointer" }}>목표 표시 끄기</button>}
       </div>
 
